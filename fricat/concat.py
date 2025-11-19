@@ -82,3 +82,5 @@ def rtsp_record(src_root: Path, dst_root: Path) -> None:
         if dst_file.exists():
             continue
         ffmpeg_concat(recordings, dst_file)
+        for r in recordings:
+            r.unlink()
