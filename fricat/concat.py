@@ -2,6 +2,7 @@ import shlex
 import itertools
 import subprocess
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -36,7 +37,12 @@ def frigate(src_root: Path, dst_root: Path) -> None:
         date_str, hour_str, cam_name, _ = p.parts[-4:]
         return (date_str, hour_str, cam_name)
 
+    def old_file(p: Path) -> bool:
+        mtime_threshold = datetime.now() - timedelta(hours=24)
+        return p.stat().st_mtime < mtime_threshold.timestamp()
+
     recordings = sorted(src_root.rglob('*.mp4'))
+    recordings = filter(old_file, recordings)
     for key, recordings in itertools.groupby(recordings, key=group_key):
         date_str, hour_str, cam_name = key
         recordings = list(recordings)
