@@ -39,15 +39,16 @@ def concat_to_mkv(src_root: Path, dst_root: Path) -> None:
             for r in recordings:
                 list_file.write(f"file '{r}'\n")
             list_file.flush()
-            cmd = [
-                'ffmpeg',
-                '-hide_banner', '-loglevel', 'warning',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', list_file.name,
-                '-c', 'copy',
-                str(out_file),
-            ]
-            print(shlex.join(cmd))
+            _input = shlex.quote(list_file.name)
+            _output = shlex.quote(str(out_file))
+            _ffmpeg = f'''
+                ffmpeg -hide_banner -loglevel warning
+                -f concat -safe 0
+                -i {_input}
+                -c copy
+                {_output}
+            '''
+            ffmpeg = shlex.split(_ffmpeg, comments=True)
+            print(shlex.join(ffmpeg))
             dst_dir.mkdir(parents=True, exist_ok=True)
-            subprocess.run(cmd, check=True)
+            subprocess.run(ffmpeg, check=True)
