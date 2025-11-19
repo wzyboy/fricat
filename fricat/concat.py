@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
-def concat_to_mkv(src_files: list[Path], dst_file: Path) -> None:
+def ffmpeg_concat(src_files: list[Path], dst_file: Path) -> None:
     with NamedTemporaryFile('wt', encoding='utf-8') as list_file:
         for r in src_files:
             list_file.write(f"file '{r}'\n")
@@ -60,7 +60,7 @@ def frigate(src_root: Path, dst_root: Path) -> None:
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
         if dst_file.exists():
             continue
-        concat_to_mkv(recordings, dst_file)
+        ffmpeg_concat(recordings, dst_file)
 
 
 def rtsp_record(src_root: Path, dst_root: Path) -> None:
@@ -81,4 +81,4 @@ def rtsp_record(src_root: Path, dst_root: Path) -> None:
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
         if dst_file.exists():
             continue
-        concat_to_mkv(recordings, dst_file)
+        ffmpeg_concat(recordings, dst_file)
