@@ -2,6 +2,7 @@ import click
 from pathlib import Path
 from fricat.concat import frigate
 from fricat.concat import rtsp_record
+from fricat import prune
 
 
 @click.group()
@@ -18,3 +19,6 @@ def concat(src_root: Path, dst_root: Path, layout: str):
         frigate(src_root, dst_root)
     elif layout == 'rtsp_record':
         rtsp_record(src_root, dst_root)
+
+
+cli.add_command(prune.main, 'prune')
