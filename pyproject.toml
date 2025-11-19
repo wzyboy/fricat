@@ -7,3 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "click>=8.3.1",
 ]
+
+[project.scripts]
+fricat = "fricat.cli:cli"
