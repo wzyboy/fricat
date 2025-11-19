@@ -1,3 +1,4 @@
+import shlex
 import itertools
 import subprocess
 from datetime import datetime
@@ -30,19 +31,23 @@ def concat_to_mkv(src_root: Path, dst_root: Path) -> None:
                 raise AssertionError(f'Invalid recording: {r}') from None
 
         dst_dir = dst_root / date_str
-        dst_dir.mkdir(parents=True, exist_ok=True)
         out_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
+        if out_file.exists():
+            continue
+
         with NamedTemporaryFile('wt', encoding='utf-8') as list_file:
             for r in recordings:
                 list_file.write(f"file '{r}'\n")
             list_file.flush()
             cmd = [
                 'ffmpeg',
+                '-hide_banner', '-loglevel', 'warning',
                 '-f', 'concat',
                 '-safe', '0',
                 '-i', list_file.name,
                 '-c', 'copy',
                 str(out_file),
             ]
-            print(cmd)
+            print(shlex.join(cmd))
+            dst_dir.mkdir(parents=True, exist_ok=True)
             subprocess.run(cmd, check=True)
