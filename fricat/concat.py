@@ -38,7 +38,7 @@ def frigate(src_root: Path, dst_root: Path) -> None:
         date_str, hour_str, cam_name, _ = p.parts[-4:]
         return (date_str, hour_str, cam_name)
 
-    threshold = datetime.now(UTC) - timedelta(hours=2)
+    two_hours_ago = datetime.now(UTC) - timedelta(hours=2)
 
     recordings = sorted(src_root.rglob('*.mp4'))
     for key, recordings in itertools.groupby(recordings, key=group_key):
@@ -46,8 +46,10 @@ def frigate(src_root: Path, dst_root: Path) -> None:
         recordings = list(recordings)
 
         # Only process finished files
+        # If it's 10:00 UTC now, only process up to dir 08, which contains
+        # files from 08:00 UTC to 08:59 UTC. Should be safe...
         dir_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
-        if dir_dt >= threshold:
+        if dir_dt >= two_hours_ago:
             continue
 
         dst_dir = dst_root / date_str
