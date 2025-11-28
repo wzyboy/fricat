@@ -38,7 +38,6 @@ def frigate(src_root: Path, dst_root: Path) -> None:
     # /media/frigate/archive/2025-11-18/14_CAM2.mp4
 
     def group_key(p: Path) -> tuple[str, str, str]:
-        p = p.resolve().absolute()
         date_str, hour_str, cam_name, _ = p.parts[-4:]
         return (date_str, hour_str, cam_name)
 
