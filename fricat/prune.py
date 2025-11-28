@@ -92,8 +92,9 @@ def choose_kept(items: list[DirEntry], counts: dict[str, int]) -> tuple[set[str]
 @click.option('-w', '--keep-weekly', 'weekly', type=int, default=0, help='Number of weekly backups to keep')
 @click.option('-m', '--keep-monthly', 'monthly', type=int, default=0, help='Number of monthly backups to keep')
 @click.option('-y', '--keep-yearly', 'yearly', type=int, default=0, help='Number of yearly backups to keep')
+@click.option('-q', '--quiet', is_flag=True, help='Do not print pruning details')
 @click.option('-n', '--dry-run', is_flag=True, help='Show what would be removed without deleting')
-def main(base: Path, daily: int, weekly: int, monthly: int, yearly: int, dry_run: bool) -> None:
+def main(base: Path, daily: int, weekly: int, monthly: int, yearly: int, quiet: bool, dry_run: bool) -> None:
     """Prune dated directories (YYYY-MM-DD) with GFS retention."""
     if not any((daily, weekly, monthly, yearly)):
         raise click.UsageError('At least one of --keep-* rules should be provided')
@@ -109,7 +110,8 @@ def main(base: Path, daily: int, weekly: int, monthly: int, yearly: int, dry_run
     for _, path, name in dirs:
         if name in kept:
             rule, num = because[name]
-            click.echo(f'{prefix}KEEP   {name}   (rule: {rule} #{num})')
+            if not quiet and not dry_run:
+                click.echo(f'{prefix}KEEP   {name}   (rule: {rule} #{num})')
         else:
             size = dir_size(path)
             total_bytes += size
