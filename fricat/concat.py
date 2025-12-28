@@ -89,9 +89,9 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
     write_metrics_file(
         metrics_file,
         metrics={
-            'fricat_concat_total_bytes': total_size,
+            'fricat_concat_processed_bytes': total_size,
             'fricat_concat_input_files': total_inputs,
-            'fricat_concat_outputs': outputs_created,
+            'fricat_concat_output_files': outputs_created,
             'fricat_concat_duration_seconds': duration,
             'fricat_concat_last_run_timestamp_seconds': timestamp,
         },

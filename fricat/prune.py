@@ -151,7 +151,7 @@ def main(
         write_metrics_file(
             metrics_file,
             metrics={
-                'fricat_prune_total_dirs': len(dirs),
+                'fricat_prune_input_dirs': len(dirs),
                 'fricat_prune_kept_dirs': len(kept),
                 'fricat_prune_removed_dirs': removed_dirs,
                 'fricat_prune_removed_bytes': removed_bytes,
