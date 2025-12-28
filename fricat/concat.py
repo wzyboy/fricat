@@ -6,9 +6,12 @@ from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from time import time
+from time import perf_counter
 
 import click
 from fricat.utils import format_size
+from fricat.metrics import write_metrics_file
 
 
 def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
@@ -36,7 +39,14 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
 @click.command()
 @click.argument('src_root', type=click.Path(path_type=Path))
 @click.argument('dst_root', type=click.Path(path_type=Path))
-def main(src_root: Path, dst_root: Path) -> None:
+@click.option(
+    '--metrics-file',
+    type=click.Path(path_type=Path),
+    default=Path('/var/lib/node_exporter/fricat_concat.prom'),
+    show_default=True,
+    help='Write Prometheus textfile metrics to this path',
+)
+def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
     # /media/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
     #                                      %H      %M %S
     # /media/frigate/archive/2025-11-18/14_CAM2.mp4
@@ -45,13 +55,16 @@ def main(src_root: Path, dst_root: Path) -> None:
         date_str, hour_str, cam_name, _ = p.parts[-4:]
         return (date_str, hour_str, cam_name)
 
+    started_at = perf_counter()
     two_hours_ago = datetime.now(UTC) - timedelta(hours=2)
 
     recordings = sorted(src_root.rglob('*.mp4'))
+    total_inputs = 0
+    outputs_created = 0
     total_size = 0
-    for key, recordings in itertools.groupby(recordings, key=group_key):
+    for key, group in itertools.groupby(recordings, key=group_key):
         date_str, hour_str, cam_name = key
-        recordings = list(recordings)
+        grouped_recordings = list(group)
 
         # Only process finished files
         # If it's 10:00 UTC now, only process up to dir 08, which contains
@@ -64,6 +77,22 @@ def main(src_root: Path, dst_root: Path) -> None:
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
         if dst_file.exists():
             continue
-        total_size += ffmpeg(recordings, dst_file)
+
+        outputs_created += 1
+        total_inputs += len(grouped_recordings)
+        total_size += ffmpeg(grouped_recordings, dst_file)
 
     print(f'Total size: {format_size(total_size)}')
+    duration = perf_counter() - started_at
+    timestamp = time()
+
+    write_metrics_file(
+        metrics_file,
+        metrics={
+            'fricat_concat_total_bytes': total_size,
+            'fricat_concat_input_files': total_inputs,
+            'fricat_concat_outputs': outputs_created,
+            'fricat_concat_duration_seconds': duration,
+            'fricat_concat_last_run_timestamp_seconds': timestamp,
+        },
+    )

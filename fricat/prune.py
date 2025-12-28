@@ -18,10 +18,13 @@ import shutil
 import datetime
 from pathlib import Path
 from collections import OrderedDict
-from fricat.utils import format_size
-from fricat.utils import dir_size
+from time import time
+from time import perf_counter
 
 import click
+from fricat.utils import dir_size
+from fricat.utils import format_size
+from fricat.metrics import write_metrics_file
 
 # Period formats used to group dates
 PRUNING_PATTERNS: OrderedDict[str, str] = OrderedDict(
@@ -94,11 +97,28 @@ def choose_kept(items: list[DirEntry], counts: dict[str, int]) -> tuple[set[str]
 @click.option('-y', '--keep-yearly', 'yearly', type=int, default=0, help='Number of yearly backups to keep')
 @click.option('-q', '--quiet', is_flag=True, help='Do not print pruning details')
 @click.option('-n', '--dry-run', is_flag=True, help='Show what would be removed without deleting')
-def main(base: Path, daily: int, weekly: int, monthly: int, yearly: int, quiet: bool, dry_run: bool) -> None:
+@click.option(
+    '--metrics-file',
+    type=click.Path(path_type=Path),
+    default=Path('/var/lib/node_exporter/fricat_prune.prom'),
+    show_default=True,
+    help='Write Prometheus textfile metrics to this path',
+)
+def main(
+    base: Path,
+    daily: int,
+    weekly: int,
+    monthly: int,
+    yearly: int,
+    quiet: bool,
+    dry_run: bool,
+    metrics_file: Path,
+) -> None:
     """Prune dated directories (YYYY-MM-DD) with GFS retention."""
     if not any((daily, weekly, monthly, yearly)):
         raise click.UsageError('At least one of --keep-* rules should be provided')
 
+    started_at = perf_counter()
     dirs = scan_directories(base)
     kept, because = choose_kept(
         dirs,
@@ -121,3 +141,21 @@ def main(base: Path, daily: int, weekly: int, monthly: int, yearly: int, quiet: 
                 shutil.rmtree(path)
 
     click.echo(f'\n{prefix}Removed {len(dirs) - len(kept)} directories totalling {format_size(total_bytes)}.')
+
+    duration = perf_counter() - started_at
+    timestamp = time()
+
+    removed_dirs = 0 if dry_run else len(dirs) - len(kept)
+    removed_bytes = 0 if dry_run else total_bytes
+    if not dry_run:
+        write_metrics_file(
+            metrics_file,
+            metrics={
+                'fricat_prune_total_dirs': len(dirs),
+                'fricat_prune_kept_dirs': len(kept),
+                'fricat_prune_removed_dirs': removed_dirs,
+                'fricat_prune_removed_bytes': removed_bytes,
+                'fricat_prune_duration_seconds': duration,
+                'fricat_prune_last_run_timestamp_seconds': timestamp,
+            },
+        )
