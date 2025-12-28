@@ -1,6 +1,5 @@
 from pathlib import Path
 from collections.abc import Mapping
-from tempfile import NamedTemporaryFile
 
 import click
 from prometheus_client import CollectorRegistry, Gauge, write_to_textfile
@@ -22,13 +21,5 @@ def write_metrics_file(
             gauge.set(float(value))
 
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile('w', delete=False, dir=metrics_path.parent, prefix=metrics_path.name, suffix='.tmp') as tmp:
-        tmp_path = Path(tmp.name)
-        try:
-            write_to_textfile(str(tmp_path), registry)
-            tmp.flush()
-            tmp_path.replace(metrics_path)
-            click.echo(f'Wrote metrics to {metrics_path}')
-        except Exception as exc:
-            click.echo(f'Failed to write metrics to {metrics_path}: {exc}', err=True)
-            tmp_path.unlink(missing_ok=True)
+    write_to_textfile(str(metrics_path), registry)
+    click.echo(f'Wrote metrics to {metrics_path}')

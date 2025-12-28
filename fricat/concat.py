@@ -60,7 +60,6 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
 
     recordings = sorted(src_root.rglob('*.mp4'))
     total_inputs = 0
-    outputs_created = 0
     total_size = 0
     for key, group in itertools.groupby(recordings, key=group_key):
         date_str, hour_str, cam_name = key
@@ -78,7 +77,6 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
         if dst_file.exists():
             continue
 
-        outputs_created += 1
         total_inputs += len(grouped_recordings)
         total_size += ffmpeg(grouped_recordings, dst_file)
 
@@ -90,8 +88,7 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
         metrics_file,
         metrics={
             'fricat_concat_processed_bytes': total_size,
-            'fricat_concat_input_files': total_inputs,
-            'fricat_concat_output_files': outputs_created,
+            'fricat_concat_processed_files': total_inputs,
             'fricat_concat_duration_seconds': duration,
             'fricat_concat_last_run_timestamp_seconds': timestamp,
         },
