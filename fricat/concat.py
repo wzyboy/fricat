@@ -7,10 +7,11 @@ from datetime import timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+import click
 from fricat.utils import format_size
 
 
-def ffmpeg_concat(src_files: list[Path], dst_file: Path) -> int:
+def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
     """Return the size of dst_file"""
     with NamedTemporaryFile('wt', encoding='utf-8') as list_file:
         for r in src_files:
@@ -32,7 +33,10 @@ def ffmpeg_concat(src_files: list[Path], dst_file: Path) -> int:
     return dst_file.stat().st_size
 
 
-def frigate(src_root: Path, dst_root: Path) -> None:
+@click.command()
+@click.argument('src_root', type=click.Path(path_type=Path))
+@click.argument('dst_root', type=click.Path(path_type=Path))
+def main(src_root: Path, dst_root: Path) -> None:
     # /media/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
     #                                      %H      %M %S
     # /media/frigate/archive/2025-11-18/14_CAM2.mp4
@@ -60,29 +64,6 @@ def frigate(src_root: Path, dst_root: Path) -> None:
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
         if dst_file.exists():
             continue
-        total_size += ffmpeg_concat(recordings, dst_file)
+        total_size += ffmpeg(recordings, dst_file)
 
     print(f'Total size: {format_size(total_size)}')
-
-
-def rtsp_record(src_root: Path, dst_root: Path) -> None:
-    # /media/public/NVR/2024-11-30/CAM1_2024-11-30_00-00-01.mkv
-    # /media/public/NVR/2024-11-30/00_CAM1.mkv
-
-    def group_key(p: Path) -> tuple[str, str, str]:
-        cam_name, date_str, time_str = p.stem.split('_')
-        hour_str = time_str.split('-')[0]
-        return (date_str, hour_str, cam_name)
-
-    recordings = sorted(src_root.rglob('*.mkv'))
-    for key, recordings in itertools.groupby(recordings, key=group_key):
-        date_str, hour_str, cam_name = key
-        recordings = list(recordings)
-
-        dst_dir = dst_root / date_str
-        dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
-        if dst_file.exists():
-            continue
-        ffmpeg_concat(recordings, dst_file)
-        for r in recordings:
-            r.unlink()
