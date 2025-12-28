@@ -10,3 +10,7 @@ dependencies = [
 
 [project.scripts]
 fricat = "fricat.cli:cli"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
