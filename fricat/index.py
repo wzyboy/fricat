@@ -8,6 +8,12 @@ from fricat.sidecar import fetch_segments
 from fricat.sidecar import write_sidecar
 
 def _parse_recording_path(root: Path, path: Path) -> tuple[str, str, str] | None:
+    """Parse archive paths like YYYY-MM-DD/HH_CAMERA.mkv.
+
+    Example:
+        root=/archive, path=/archive/2026-03-29/11_CAM1.mkv
+        -> ('2026-03-29', '11', 'CAM1')
+    """
     try:
         rel = path.relative_to(root)
     except ValueError:
