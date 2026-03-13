@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import json
 from dataclasses import dataclass
 from datetime import UTC
@@ -24,7 +23,28 @@ class Recording:
     meta_path: Path | None
 
 
-RECORDING_RE = re.compile(r'^(\d{4}-\d{2}-\d{2})/(\d{2})_(.+)\.mkv$')
+def _parse_recording_path(root: Path, path: Path) -> tuple[str, str, str] | None:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return None
+    if len(rel.parts) != 2:
+        return None
+    date_str = rel.parts[0]
+    file_name = rel.parts[1]
+    try:
+        datetime.fromisoformat(f'{date_str} 00:00:00')
+    except ValueError:
+        return None
+    if not file_name.endswith('.mkv'):
+        return None
+    base = file_name[:-4]
+    if '_' not in base:
+        return None
+    hour_str, camera = base.split('_', 1)
+    if len(hour_str) != 2 or not hour_str.isdigit():
+        return None
+    return date_str, hour_str, camera
 
 
 def get_archive_root() -> Path:
@@ -37,14 +57,10 @@ def get_archive_root() -> Path:
 def scan_recordings(root: Path) -> list[Recording]:
     recordings: list[Recording] = []
     for path in root.rglob('*.mkv'):
-        try:
-            rel = path.relative_to(root).as_posix()
-        except ValueError:
+        parsed = _parse_recording_path(root, path)
+        if not parsed:
             continue
-        match = RECORDING_RE.match(rel)
-        if not match:
-            continue
-        date_str, hour_str, camera = match.groups()
+        date_str, hour_str, camera = parsed
         try:
             start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
         except ValueError:

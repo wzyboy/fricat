@@ -35,7 +35,9 @@ def _parse_heatmap(raw: object) -> dict[str, int] | None:
     return None
 
 
-def _relative_segment_path(path: str, recordings_root: Path) -> str:
+def _relative_segment_path(path: str, recordings_root: Path | None) -> str:
+    if recordings_root is None:
+        return path
     try:
         return str(Path(path).resolve().relative_to(recordings_root))
     except ValueError:
@@ -44,7 +46,7 @@ def _relative_segment_path(path: str, recordings_root: Path) -> str:
 
 def fetch_segments(
     db_path: Path,
-    recordings_root: Path,
+    recordings_root: Path | None,
     camera: str,
     start_ts: float,
     end_ts: float,
@@ -89,7 +91,7 @@ def build_sidecar(
     start_utc: datetime,
     segments: list[SegmentInfo],
     db_path: Path,
-    recordings_root: Path,
+    recordings_root: Path | None,
 ) -> dict[str, object]:
     payload = {
         'camera': camera,
@@ -97,7 +99,7 @@ def build_sidecar(
         'duration_seconds': 3600,
         'source': {
             'db_path': str(db_path),
-            'recordings_root': str(recordings_root),
+            'recordings_root': str(recordings_root) if recordings_root else None,
         },
         'segments': [
             {
