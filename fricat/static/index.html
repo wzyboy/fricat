@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fricat archive</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="title-block">
+          <h1>fricat archive</h1>
+          <p class="subtitle">Calendar view of merged recordings (local time)</p>
+        </div>
+        <div class="controls">
+          <label class="control">
+            <span>Camera</span>
+            <select id="camera"></select>
+          </label>
+          <label class="control">
+            <span>Month</span>
+            <input id="month" type="month" />
+          </label>
+        </div>
+      </header>
+
+      <section class="calendar" id="calendar"></section>
+
+      <section class="details">
+        <div class="details-header">
+          <h2 id="selected-date">Select a day</h2>
+          <span id="timezone" class="timezone"></span>
+        </div>
+        <div id="recordings" class="recordings"></div>
+      </section>
+
+      <section class="player">
+        <video id="player" controls preload="metadata"></video>
+        <div id="player-meta" class="player-meta"></div>
+      </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
