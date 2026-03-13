@@ -65,6 +65,7 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
 )
 @click.option(
     '--write-sidecar/--no-write-sidecar',
+    'write_sidecar_flag',
     default=True,
     show_default=True,
     help='Write per-hour JSON sidecar with segment metadata',
