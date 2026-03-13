@@ -6,10 +6,13 @@ const cameraEl = document.getElementById('camera');
 const monthEl = document.getElementById('month');
 const playerEl = document.getElementById('player');
 const playerMetaEl = document.getElementById('player-meta');
+const heatbarEl = document.getElementById('heatbar');
 
 let recordings = [];
 let recordingsByDay = new Map();
 let selectedDayKey = null;
+let activeSegments = [];
+let heatbarBins = [];
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -154,10 +157,97 @@ function renderRecordingsForDay(key, date) {
       playerEl.src = src;
       playerEl.play();
       playerMetaEl.textContent = `${rec.camera} • ${formatLocalDate(recDate)} ${formatLocalTime(recDate)}`;
+      loadSidecar(rec.path);
     });
 
     recordingsEl.appendChild(row);
   });
+}
+
+function buildHeatbarBins(segments) {
+  const bins = new Array(360).fill(0);
+  segments.forEach((segment) => {
+    const motion = Number(segment.motion ?? 0);
+    if (!Number.isFinite(segment.offset) || !Number.isFinite(segment.duration)) {
+      return;
+    }
+    const start = Math.max(0, segment.offset);
+    const end = Math.min(3600, segment.offset + segment.duration);
+    const startBin = Math.floor(start / 10);
+    const endBin = Math.min(359, Math.floor((end - 0.001) / 10));
+    for (let i = startBin; i <= endBin; i += 1) {
+      bins[i] = Math.max(bins[i], motion);
+    }
+  });
+  return bins;
+}
+
+function renderHeatbar() {
+  const bins = heatbarBins;
+  const ctx = heatbarEl.getContext('2d');
+  const width = heatbarEl.clientWidth;
+  const height = heatbarEl.clientHeight;
+  const scale = window.devicePixelRatio || 1;
+  heatbarEl.width = Math.floor(width * scale);
+  heatbarEl.height = Math.floor(height * scale);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(scale, scale);
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = '#e5ddcf';
+  ctx.fillRect(0, 0, width, height);
+
+  if (!bins.length) {
+    return;
+  }
+  const nonZero = bins.filter((value) => value > 0);
+  if (nonZero.length === 0) {
+    return;
+  }
+  const scaled = bins.map((value) => Math.log1p(value));
+  const scaledNonZero = scaled.filter((value) => value > 0).sort((a, b) => a - b);
+  const maxValue = scaledNonZero[scaledNonZero.length - 1];
+  const percentileIndex = Math.floor(0.85 * (scaledNonZero.length - 1));
+  const floorValue = scaledNonZero[Math.max(0, percentileIndex)];
+  const barWidth = width / bins.length;
+  scaled.forEach((value, index) => {
+    if (value < floorValue) {
+      return;
+    }
+    const intensity = Math.min(1, value / maxValue);
+    const alpha = 0.2 + intensity * 0.8;
+    ctx.fillStyle = `rgba(42, 93, 159, ${alpha.toFixed(3)})`;
+    ctx.fillRect(index * barWidth, 0, Math.ceil(barWidth), height);
+  });
+}
+
+function seekFromHeatbar(event) {
+  if (!playerEl.src) {
+    return;
+  }
+  const rect = heatbarEl.getBoundingClientRect();
+  const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+  const duration = Number.isFinite(playerEl.duration) ? playerEl.duration : 3600;
+  playerEl.currentTime = ratio * duration;
+  playerEl.play();
+}
+
+async function loadSidecar(path) {
+  try {
+    const response = await fetch(`/api/meta?path=${encodeURIComponent(path)}`);
+    if (!response.ok) {
+      heatbarBins = [];
+      renderHeatbar();
+      return;
+    }
+    const data = await response.json();
+    activeSegments = Array.isArray(data.segments) ? data.segments : [];
+    heatbarBins = buildHeatbarBins(activeSegments);
+    renderHeatbar();
+  } catch (error) {
+    heatbarBins = [];
+    renderHeatbar();
+  }
 }
 
 async function refresh() {
@@ -177,6 +267,8 @@ function setDefaultMonth() {
 
 cameraEl.addEventListener('change', refresh);
 monthEl.addEventListener('change', refresh);
+window.addEventListener('resize', renderHeatbar);
+heatbarEl.addEventListener('click', seekFromHeatbar);
 
 (async () => {
   setTimezoneLabel();
