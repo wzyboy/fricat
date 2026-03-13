@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import json
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -123,3 +124,21 @@ async def media(path: str) -> FileResponse:
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail='File not found')
     return FileResponse(file_path)
+
+
+@app.get('/api/meta')
+async def meta(path: str) -> JSONResponse:
+    root = get_archive_root()
+    file_path = (root / path).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail='File not found')
+    sidecar_path = file_path.with_suffix('.json')
+    if not sidecar_path.is_file():
+        raise HTTPException(status_code=404, detail='Sidecar not found')
+    try:
+        data = json.loads(sidecar_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
+    return JSONResponse(content=data)

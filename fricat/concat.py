@@ -12,6 +12,9 @@ from time import perf_counter
 import click
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
+from fricat.sidecar import build_sidecar
+from fricat.sidecar import fetch_segments
+from fricat.sidecar import write_sidecar
 
 
 def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
@@ -46,7 +49,34 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
     show_default=True,
     help='Write Prometheus textfile metrics to this path',
 )
-def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
+@click.option(
+    '--db-path',
+    type=click.Path(path_type=Path),
+    default=Path('/var/lib/frigate/frigate.db'),
+    show_default=True,
+    help='Frigate sqlite db path for segment metadata',
+)
+@click.option(
+    '--recordings-root',
+    type=click.Path(path_type=Path),
+    default=Path('/media/frigate/recordings'),
+    show_default=True,
+    help='Root path used in the DB segment paths',
+)
+@click.option(
+    '--write-sidecar/--no-write-sidecar',
+    default=True,
+    show_default=True,
+    help='Write per-hour JSON sidecar with segment metadata',
+)
+def main(
+    src_root: Path,
+    dst_root: Path,
+    metrics_file: Path,
+    db_path: Path,
+    recordings_root: Path,
+    write_sidecar_flag: bool,
+) -> None:
     # /media/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
     #                                      %H      %M %S
     # /media/frigate/archive/2025-11-18/14_CAM2.mp4
@@ -57,6 +87,10 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
 
     started_at = perf_counter()
     two_hours_ago = datetime.now(UTC) - timedelta(hours=2)
+    sidecar_enabled = write_sidecar_flag
+    if sidecar_enabled and not db_path.exists():
+        click.echo(f'Sidecar disabled, db not found at {db_path}')
+        sidecar_enabled = False
 
     recordings = sorted(src_root.rglob('*.mp4'))
     total_inputs = 0
@@ -74,11 +108,50 @@ def main(src_root: Path, dst_root: Path, metrics_file: Path) -> None:
 
         dst_dir = dst_root / date_str
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
+        sidecar_path = dst_file.with_suffix('.json')
         if dst_file.exists():
+            if sidecar_enabled and not sidecar_path.exists():
+                start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
+                start_ts = start_utc.timestamp()
+                end_ts = start_ts + 3600
+                segments = fetch_segments(
+                    db_path=db_path,
+                    recordings_root=recordings_root,
+                    camera=cam_name,
+                    start_ts=start_ts,
+                    end_ts=end_ts,
+                )
+                sidecar = build_sidecar(
+                    camera=cam_name,
+                    start_utc=start_utc,
+                    segments=segments,
+                    db_path=db_path,
+                    recordings_root=recordings_root,
+                )
+                write_sidecar(sidecar_path, sidecar)
             continue
 
         total_inputs += len(grouped_recordings)
         total_size += ffmpeg(grouped_recordings, dst_file)
+        if sidecar_enabled:
+            start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
+            start_ts = start_utc.timestamp()
+            end_ts = start_ts + 3600
+            segments = fetch_segments(
+                db_path=db_path,
+                recordings_root=recordings_root,
+                camera=cam_name,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
+            sidecar = build_sidecar(
+                camera=cam_name,
+                start_utc=start_utc,
+                segments=segments,
+                db_path=db_path,
+                recordings_root=recordings_root,
+            )
+            write_sidecar(sidecar_path, sidecar)
 
     print(f'Total size: {format_size(total_size)}')
     duration = perf_counter() - started_at
