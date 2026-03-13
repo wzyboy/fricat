@@ -7,12 +7,21 @@ const monthEl = document.getElementById('month');
 const playerEl = document.getElementById('player');
 const playerMetaEl = document.getElementById('player-meta');
 const heatbarEl = document.getElementById('heatbar');
+const playerPanelEl = document.getElementById('player-panel');
+const prevRecordingEl = document.getElementById('prev-recording');
+const nextRecordingEl = document.getElementById('next-recording');
+const back10El = document.getElementById('back-10s');
+const forward10El = document.getElementById('forward-10s');
+const playbackRateEl = document.getElementById('playback-rate');
 
 let recordings = [];
 let recordingsByDay = new Map();
 let selectedDayKey = null;
+let selectedDayDate = null;
 let activeSegments = [];
 let heatbarBins = [];
+let currentDayRecordings = [];
+let selectedRecordingPath = null;
 
 function pad(value) {
   return String(value).padStart(2, '0');
@@ -120,8 +129,10 @@ function renderCalendar(date) {
         return;
       }
       selectedDayKey = key;
+      selectedDayDate = cellDate;
       renderCalendar(date);
       renderRecordingsForDay(key, cellDate);
+      updateUrl();
     });
 
     calendarEl.appendChild(cell);
@@ -132,6 +143,7 @@ function renderRecordingsForDay(key, date) {
   selectedDateEl.textContent = formatLocalDate(date);
   recordingsEl.innerHTML = '';
   const dayRecs = recordingsByDay.get(key) || [];
+  currentDayRecordings = dayRecs;
   if (dayRecs.length === 0) {
     recordingsEl.textContent = 'No recordings.';
     return;
@@ -153,15 +165,54 @@ function renderRecordingsForDay(key, date) {
     row.appendChild(camera);
 
     row.addEventListener('click', () => {
-      const src = `/media/${rec.path}`;
-      playerEl.src = src;
-      playerEl.play();
-      playerMetaEl.textContent = `${rec.camera} • ${formatLocalDate(recDate)} ${formatLocalTime(recDate)}`;
-      loadSidecar(rec.path);
+      setSelectedRecording(rec, recDate);
     });
 
     recordingsEl.appendChild(row);
   });
+}
+
+function setSelectedRecording(rec, recDate) {
+  const src = `/media/${rec.path}`;
+  selectedRecordingPath = rec.path;
+  playerPanelEl.classList.remove('empty');
+  playerEl.src = src;
+  playerEl.play();
+  playerMetaEl.textContent = `${rec.camera} • ${formatLocalDate(recDate)} ${formatLocalTime(recDate)}`;
+  loadSidecar(rec.path);
+  updateUrl();
+  updatePlaybackNav();
+}
+
+function clearPlayer() {
+  playerPanelEl.classList.add('empty');
+  playerEl.removeAttribute('src');
+  playerEl.load();
+  playerMetaEl.textContent = '';
+  heatbarBins = [];
+  renderHeatbar();
+}
+
+function updatePlaybackNav() {
+  const index = currentDayRecordings.findIndex((rec) => rec.path === selectedRecordingPath);
+  const hasPrev = index > 0;
+  const hasNext = index >= 0 && index < currentDayRecordings.length - 1;
+  prevRecordingEl.disabled = !hasPrev;
+  nextRecordingEl.disabled = !hasNext;
+}
+
+function handlePrevNext(direction) {
+  const index = currentDayRecordings.findIndex((rec) => rec.path === selectedRecordingPath);
+  if (index === -1) {
+    return;
+  }
+  const nextIndex = index + direction;
+  if (nextIndex < 0 || nextIndex >= currentDayRecordings.length) {
+    return;
+  }
+  const rec = currentDayRecordings[nextIndex];
+  const recDate = new Date(rec.start_utc);
+  setSelectedRecording(rec, recDate);
 }
 
 function buildHeatbarBins(segments) {
@@ -279,14 +330,59 @@ async function loadSidecar(path) {
   }
 }
 
+function updateUrl() {
+  const params = new URLSearchParams();
+  if (monthEl.value) {
+    params.set('month', monthEl.value);
+  }
+  if (cameraEl.value) {
+    params.set('camera', cameraEl.value);
+  }
+  if (selectedDayKey) {
+    params.set('day', selectedDayKey);
+  }
+  if (selectedRecordingPath) {
+    params.set('path', selectedRecordingPath);
+  }
+  const next = `${window.location.pathname}?${params.toString()}`;
+  window.history.replaceState({}, '', next);
+}
+
 async function refresh() {
   const value = monthEl.value;
   const [year, month] = value.split('-').map((part) => Number(part));
   const current = new Date(year, month - 1, 1);
   await fetchRecordingsForMonth(current);
   renderCalendar(current);
-  selectedDateEl.textContent = 'Select a day';
-  recordingsEl.innerHTML = '';
+  if (selectedDayDate) {
+    if (selectedDayDate.getFullYear() !== current.getFullYear() || selectedDayDate.getMonth() !== current.getMonth()) {
+      selectedDayKey = null;
+      selectedDayDate = null;
+      selectedRecordingPath = null;
+    }
+  }
+  if (selectedDayKey && recordingsByDay.has(selectedDayKey)) {
+    renderRecordingsForDay(selectedDayKey, selectedDayDate || new Date(selectedDayKey));
+    if (!currentDayRecordings.some((rec) => rec.path === selectedRecordingPath)) {
+      selectedRecordingPath = null;
+      clearPlayer();
+    }
+    updatePlaybackNav();
+  } else if (selectedDayKey) {
+    selectedDateEl.textContent = formatLocalDate(selectedDayDate || new Date(selectedDayKey));
+    recordingsEl.textContent = 'No recordings.';
+    currentDayRecordings = [];
+    selectedRecordingPath = null;
+    clearPlayer();
+    updatePlaybackNav();
+  } else {
+    selectedDateEl.textContent = 'Select a day';
+    recordingsEl.innerHTML = '';
+    currentDayRecordings = [];
+    selectedRecordingPath = null;
+    clearPlayer();
+  }
+  updateUrl();
 }
 
 function setDefaultMonth() {
@@ -298,10 +394,53 @@ cameraEl.addEventListener('change', refresh);
 monthEl.addEventListener('change', refresh);
 window.addEventListener('resize', renderHeatbar);
 heatbarEl.addEventListener('click', seekFromHeatbar);
+prevRecordingEl.addEventListener('click', () => handlePrevNext(-1));
+nextRecordingEl.addEventListener('click', () => handlePrevNext(1));
+back10El.addEventListener('click', () => {
+  playerEl.currentTime = Math.max(0, playerEl.currentTime - 10);
+});
+forward10El.addEventListener('click', () => {
+  const duration = Number.isFinite(playerEl.duration) ? playerEl.duration : 3600;
+  playerEl.currentTime = Math.min(duration, playerEl.currentTime + 10);
+});
+playbackRateEl.addEventListener('change', () => {
+  playerEl.playbackRate = Number(playbackRateEl.value);
+});
 
 (async () => {
   setTimezoneLabel();
+  const params = new URLSearchParams(window.location.search);
+  const month = params.get('month');
+  const camera = params.get('camera');
+  const day = params.get('day');
+  const path = params.get('path');
+
   setDefaultMonth();
+  if (month) {
+    monthEl.value = month;
+  }
+
   await fetchCameras();
+  if (camera) {
+    cameraEl.value = camera;
+  }
+  if (day) {
+    selectedDayKey = day;
+    selectedDayDate = new Date(day);
+  } else if (path) {
+    const parts = path.split('/');
+    if (parts.length >= 2) {
+      selectedDayKey = parts[0];
+      selectedDayDate = new Date(parts[0]);
+    }
+  }
+
   await refresh();
+
+  if (path) {
+    const match = recordings.find((rec) => rec.path === path);
+    if (match) {
+      setSelectedRecording(match, new Date(match.start_utc));
+    }
+  }
 })();

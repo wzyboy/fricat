@@ -80,6 +80,13 @@ body {
   gap: 10px;
 }
 
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 24px;
+  align-items: start;
+}
+
 .day {
   background: var(--panel);
   border-radius: 14px;
@@ -148,6 +155,8 @@ body {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+  max-height: 38vh;
+  overflow: auto;
 }
 
 .recording {
@@ -179,6 +188,8 @@ body {
   border-radius: 16px;
   border: 1px solid var(--grid);
   box-shadow: var(--shadow);
+  display: grid;
+  gap: 10px;
 }
 
 .player video {
@@ -188,6 +199,21 @@ body {
   background: #111;
 }
 
+.player.empty video,
+.player.empty .heatbar,
+.player.empty .player-controls,
+.player.empty .player-meta {
+  display: none;
+}
+
+.player-empty {
+  padding: 18px;
+  border: 1px dashed var(--grid);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
 .heatbar {
   width: 100%;
   height: 28px;
@@ -195,6 +221,34 @@ body {
   border-radius: 999px;
   background: #e5ddcf;
   display: block;
+}
+
+.player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.player-controls button,
+.player-controls select {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--grid);
+  background: #fff;
+  font-size: 0.95rem;
+}
+
+.player-controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .player-meta {
@@ -207,6 +261,14 @@ body {
   .controls {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .recordings {
+    max-height: none;
+  }
+
+  .content {
+    grid-template-columns: 1fr;
   }
 
   .calendar {
