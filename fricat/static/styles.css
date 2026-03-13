@@ -84,7 +84,7 @@ body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .day {
@@ -137,6 +137,7 @@ body {
   border-radius: 16px;
   border: 1px solid var(--grid);
   box-shadow: var(--shadow);
+  height: 100%;
 }
 
 .details-header {
@@ -190,11 +191,12 @@ body {
   box-shadow: var(--shadow);
   display: grid;
   gap: 10px;
+  height: 100%;
 }
 
 .player video {
   width: 100%;
-  max-height: 70vh;
+  aspect-ratio: 16 / 9;
   border-radius: 12px;
   background: #111;
 }
