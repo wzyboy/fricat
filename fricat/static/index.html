@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fricat archive</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="title-block">
+          <h1>fricat archive</h1>
+          <p class="subtitle">Calendar view of merged recordings (local time)</p>
+        </div>
+        <div class="controls">
+          <label class="control">
+            <span>Camera</span>
+            <select id="camera"></select>
+          </label>
+          <label class="control">
+            <span>Month</span>
+            <input id="month" type="month" />
+          </label>
+        </div>
+      </header>
+
+      <section class="calendar" id="calendar"></section>
+
+      <div class="content">
+        <section class="details">
+          <div class="details-header">
+            <h2 id="selected-date">Select a day</h2>
+            <span id="timezone" class="timezone"></span>
+          </div>
+          <div id="recordings" class="recordings"></div>
+        </section>
+
+        <section class="player empty" id="player-panel">
+          <div class="player-empty" id="player-empty">Select a recording to start playback.</div>
+          <video id="player" controls preload="metadata"></video>
+          <canvas id="heatbar" class="heatbar" aria-hidden="true"></canvas>
+          <div class="player-controls">
+            <button type="button" id="prev-recording">Prev</button>
+            <button type="button" id="next-recording">Next</button>
+            <button type="button" id="back-10s">-10s</button>
+            <button type="button" id="forward-10s">+10s</button>
+            <label class="speed-control">
+              <span>Speed</span>
+              <select id="playback-rate">
+                <option value="1">1x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2x</option>
+                <option value="3">3x</option>
+              </select>
+            </label>
+          </div>
+          <div id="player-meta" class="player-meta"></div>
+        </section>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
