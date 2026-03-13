@@ -209,16 +209,45 @@ function renderHeatbar() {
   const maxValue = scaledNonZero[scaledNonZero.length - 1];
   const percentileIndex = Math.floor(0.85 * (scaledNonZero.length - 1));
   const floorValue = scaledNonZero[Math.max(0, percentileIndex)];
-  const barWidth = width / bins.length;
-  scaled.forEach((value, index) => {
-    if (value < floorValue) {
-      return;
+  const absoluteFloor = Math.log1p(50);
+  const threshold = Math.max(floorValue, absoluteFloor);
+  const normalized = scaled.map((value) => (value >= threshold ? value / maxValue : 0));
+
+  const smoothWindow = 5;
+  const smoothed = normalized.map((_, index) => {
+    let sum = 0;
+    let count = 0;
+    for (let offset = -Math.floor(smoothWindow / 2); offset <= Math.floor(smoothWindow / 2); offset += 1) {
+      const idx = index + offset;
+      if (idx < 0 || idx >= normalized.length) {
+        continue;
+      }
+      sum += normalized[idx];
+      count += 1;
     }
-    const intensity = Math.min(1, value / maxValue);
-    const alpha = 0.2 + intensity * 0.8;
-    ctx.fillStyle = `rgba(42, 93, 159, ${alpha.toFixed(3)})`;
-    ctx.fillRect(index * barWidth, 0, Math.ceil(barWidth), height);
+    return count > 0 ? sum / count : 0;
   });
+
+  const step = width / (smoothed.length - 1);
+  ctx.beginPath();
+  smoothed.forEach((value, index) => {
+    const x = index * step;
+    const y = height - value * height;
+    if (index === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  });
+  ctx.strokeStyle = 'rgba(42, 93, 159, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.lineTo(width, height);
+  ctx.lineTo(0, height);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(42, 93, 159, 0.18)';
+  ctx.fill();
 }
 
 function seekFromHeatbar(event) {
