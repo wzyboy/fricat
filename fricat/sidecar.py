@@ -12,31 +12,6 @@ class SegmentInfo:
     duration: float
     motion: int | None
     objects: int | None
-    segment_path: str
-    motion_heatmap: dict[str, int] | None
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    cursor = conn.execute(f'pragma table_info({table})')
-    return {row[1] for row in cursor.fetchall()}
-
-
-def _parse_heatmap(raw: object) -> dict[str, int] | None:
-    if raw is None:
-        return None
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-    return None
-
-
-def _segment_path(path: str) -> str:
-    return path
 
 
 def fetch_segments(
@@ -46,11 +21,7 @@ def fetch_segments(
     end_ts: float,
 ) -> list[SegmentInfo]:
     conn = sqlite3.connect(db_path)
-    columns = _table_columns(conn, 'recordings')
-    has_heatmap = 'motion_heatmap' in columns
-    select_cols = ['path', 'start_time', 'end_time', 'motion', 'objects']
-    if has_heatmap:
-        select_cols.append('motion_heatmap')
+    select_cols = ['start_time', 'end_time', 'motion', 'objects']
     query = (
         f'select {", ".join(select_cols)} '
         'from recordings '
@@ -60,20 +31,16 @@ def fetch_segments(
     cursor = conn.execute(query, (camera, start_ts, end_ts))
     segments: list[SegmentInfo] = []
     for row in cursor.fetchall():
-        path = row[0]
-        seg_start = float(row[1])
-        seg_end = float(row[2])
-        motion = row[3]
-        objects = row[4]
-        heatmap_raw = row[5] if has_heatmap else None
+        seg_start = float(row[0])
+        seg_end = float(row[1])
+        motion = row[2]
+        objects = row[3]
         segments.append(
             SegmentInfo(
                 offset=seg_start - start_ts,
                 duration=seg_end - seg_start,
                 motion=motion,
                 objects=objects,
-                segment_path=_segment_path(path),
-                motion_heatmap=_parse_heatmap(heatmap_raw),
             )
         )
     conn.close()
@@ -96,8 +63,6 @@ def build_sidecar(
                 'duration': segment.duration,
                 'motion': segment.motion,
                 'objects': segment.objects,
-                'segment_path': segment.segment_path,
-                'motion_heatmap': segment.motion_heatmap,
             }
             for segment in segments
         ],
