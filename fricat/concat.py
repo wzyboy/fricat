@@ -57,13 +57,6 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
     help='Frigate sqlite db path for segment metadata',
 )
 @click.option(
-    '--recordings-root',
-    type=click.Path(path_type=Path),
-    default=Path('/media/frigate/recordings'),
-    show_default=True,
-    help='Root path used in the DB segment paths',
-)
-@click.option(
     '--write-sidecar/--no-write-sidecar',
     'write_sidecar_flag',
     default=True,
@@ -75,7 +68,6 @@ def main(
     dst_root: Path,
     metrics_file: Path,
     db_path: Path,
-    recordings_root: Path,
     write_sidecar_flag: bool,
 ) -> None:
     # /media/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
@@ -117,7 +109,6 @@ def main(
                 end_ts = start_ts + 3600
                 segments = fetch_segments(
                     db_path=db_path,
-                    recordings_root=recordings_root,
                     camera=cam_name,
                     start_ts=start_ts,
                     end_ts=end_ts,
@@ -127,7 +118,6 @@ def main(
                     start_utc=start_utc,
                     segments=segments,
                     db_path=db_path,
-                    recordings_root=recordings_root,
                 )
                 write_sidecar(sidecar_path, sidecar)
             continue
@@ -140,7 +130,6 @@ def main(
             end_ts = start_ts + 3600
             segments = fetch_segments(
                 db_path=db_path,
-                recordings_root=recordings_root,
                 camera=cam_name,
                 start_ts=start_ts,
                 end_ts=end_ts,
@@ -150,7 +139,6 @@ def main(
                 start_utc=start_utc,
                 segments=segments,
                 db_path=db_path,
-                recordings_root=recordings_root,
             )
             write_sidecar(sidecar_path, sidecar)
 

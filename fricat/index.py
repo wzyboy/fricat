@@ -82,7 +82,6 @@ def main(
         end_ts = start_ts + 3600
         segments = fetch_segments(
             db_path=db_path,
-            recordings_root=None,
             camera=camera,
             start_ts=start_ts,
             end_ts=end_ts,
@@ -92,7 +91,6 @@ def main(
             start_utc=start_utc,
             segments=segments,
             db_path=db_path,
-            recordings_root=None,
         )
         write_sidecar(sidecar_path, sidecar)
         written += 1
