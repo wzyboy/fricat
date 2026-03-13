@@ -86,6 +86,9 @@ def main(
             start_ts=start_ts,
             end_ts=end_ts,
         )
+        if not segments:
+            skipped += 1
+            continue
         sidecar = build_sidecar(
             camera=camera,
             start_utc=start_utc,
