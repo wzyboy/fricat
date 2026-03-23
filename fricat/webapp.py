@@ -7,12 +7,19 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+
+# Legacy files were using local time in filenames, while newer files are using
+# UTC time in filenames.
+LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
+LEGACY_FILENAME_TZ = ZoneInfo('America/Vancouver')
 
 
 @dataclass(frozen=True)
@@ -60,6 +67,13 @@ def get_archive_root() -> Path:
     return Path(root).resolve()
 
 
+def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
+    filename_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00')
+    if filename_dt < LEGACY_FILENAME_CUTOFF:
+        return filename_dt.replace(tzinfo=LEGACY_FILENAME_TZ).astimezone(UTC)
+    return filename_dt.replace(tzinfo=UTC)
+
+
 def scan_recordings(root: Path) -> list[Recording]:
     recordings: list[Recording] = []
     for path in root.rglob('*.mkv'):
@@ -68,7 +82,7 @@ def scan_recordings(root: Path) -> list[Recording]:
             continue
         date_str, hour_str, camera = parsed
         try:
-            start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
+            start_utc = _recording_start_utc(date_str, hour_str)
         except ValueError:
             continue
         meta_path = path.with_suffix('.json')
