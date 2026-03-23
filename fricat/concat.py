@@ -70,9 +70,9 @@ def main(
     db_path: Path,
     write_sidecar_flag: bool,
 ) -> None:
-    # /media/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
-    #                                      %H      %M %S
-    # /media/frigate/archive/2025-11-18/14_CAM2.mp4
+    # /fastpool/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
+    #                                         %H      %M %S
+    # /media/public/NVR/2025-11-18/14_CAM2.mp4
 
     def group_key(p: Path) -> tuple[str, str, str]:
         date_str, hour_str, cam_name, _ = p.parts[-4:]
