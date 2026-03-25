@@ -9,6 +9,7 @@ dependencies = [
     "fastapi>=0.135.1",
     "prometheus-client>=0.23.1",
     "tqdm>=4.67.3",
+    "tzdata>=2025.3",
     "uvicorn>=0.30.0",
 ]
 
