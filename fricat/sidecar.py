@@ -148,9 +148,7 @@ def enrich_segments_with_audio(
         max_audio_dbfs: float | None = None
         while scan_index < sample_count and samples[scan_index][0] < segment_end:
             _, value = samples[scan_index]
-            max_audio_dbfs = (
-                value if max_audio_dbfs is None else max(max_audio_dbfs, value)
-            )
+            max_audio_dbfs = value if max_audio_dbfs is None else max(max_audio_dbfs, value)
             scan_index += 1
 
         segment.audio_dbfs = max_audio_dbfs
@@ -162,7 +160,7 @@ def build_sidecar(
     camera: str,
     start_utc: datetime,
     segments: list[SegmentInfo],
-) -> dict[str, object]:
+) -> dict:
     payload = {
         'camera': camera,
         'start_utc': start_utc.replace(tzinfo=UTC).isoformat(),
