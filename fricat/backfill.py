@@ -28,7 +28,7 @@ def main(
     db_path: Path,
     overwrite: bool,
 ) -> None:
-    """Generate sidecar JSON files for existing archive recordings."""
+    """Backfill sidecar JSON files for existing archive recordings."""
     if not db_path.exists():
         raise click.ClickException(f'Database not found at {db_path}')
 
