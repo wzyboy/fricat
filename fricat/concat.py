@@ -117,7 +117,6 @@ def main(
                     camera=cam_name,
                     start_utc=start_utc,
                     segments=segments,
-                    db_path=db_path,
                 )
                 write_sidecar(sidecar_path, sidecar)
             continue
@@ -138,7 +137,6 @@ def main(
                 camera=cam_name,
                 start_utc=start_utc,
                 segments=segments,
-                db_path=db_path,
             )
             write_sidecar(sidecar_path, sidecar)
 

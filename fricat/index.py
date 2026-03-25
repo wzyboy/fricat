@@ -93,7 +93,6 @@ def main(
             camera=camera,
             start_utc=start_utc,
             segments=segments,
-            db_path=db_path,
         )
         write_sidecar(sidecar_path, sidecar)
         written += 1

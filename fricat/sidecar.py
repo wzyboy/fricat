@@ -12,6 +12,7 @@ class SegmentInfo:
     duration: float
     motion: int | None
     objects: int | None
+    dBFS: int | None
 
 
 def fetch_segments(
@@ -21,7 +22,7 @@ def fetch_segments(
     end_ts: float,
 ) -> list[SegmentInfo]:
     conn = sqlite3.connect(db_path)
-    select_cols = ['start_time', 'end_time', 'motion', 'objects']
+    select_cols = ['start_time', 'end_time', 'motion', 'objects', 'dBFS']
     query = (
         f'select {", ".join(select_cols)} '
         'from recordings '
@@ -35,12 +36,14 @@ def fetch_segments(
         seg_end = float(row[1])
         motion = row[2]
         objects = row[3]
+        dBFS = row[4]
         segments.append(
             SegmentInfo(
                 offset=seg_start - start_ts,
                 duration=seg_end - seg_start,
                 motion=motion,
                 objects=objects,
+                dBFS=dBFS,
             )
         )
     conn.close()
@@ -51,7 +54,6 @@ def build_sidecar(
     camera: str,
     start_utc: datetime,
     segments: list[SegmentInfo],
-    db_path: Path,
 ) -> dict[str, object]:
     payload = {
         'camera': camera,
@@ -63,6 +65,7 @@ def build_sidecar(
                 'duration': segment.duration,
                 'motion': segment.motion,
                 'objects': segment.objects,
+                'dBFS': segment.dBFS,
             }
             for segment in segments
         ],
