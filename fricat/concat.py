@@ -12,9 +12,7 @@ from time import perf_counter
 import click
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
-from fricat.sidecar import build_sidecar
-from fricat.sidecar import enrich_segments_with_audio
-from fricat.sidecar import fetch_segments
+from fricat.sidecar import generate_sidecar
 from fricat.sidecar import write_sidecar
 
 
@@ -57,19 +55,11 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
     show_default=True,
     help='Frigate sqlite db path for segment metadata',
 )
-@click.option(
-    '--write-sidecar/--no-write-sidecar',
-    'write_sidecar_flag',
-    default=True,
-    show_default=True,
-    help='Write per-hour JSON sidecar with segment metadata',
-)
 def main(
     src_root: Path,
     dst_root: Path,
     metrics_file: Path,
     db_path: Path,
-    write_sidecar_flag: bool,
 ) -> None:
     # /fastpool/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
     #                                         %H      %M %S
@@ -81,10 +71,6 @@ def main(
 
     started_at = perf_counter()
     two_hours_ago = datetime.now(UTC) - timedelta(hours=2)
-    sidecar_enabled = write_sidecar_flag
-    if sidecar_enabled and not db_path.exists():
-        click.echo(f'Sidecar disabled, db not found at {db_path}')
-        sidecar_enabled = False
 
     recordings = sorted(src_root.rglob('*.mp4'))
     total_inputs = 0
@@ -102,45 +88,22 @@ def main(
 
         dst_dir = dst_root / date_str
         dst_file = dst_dir / f'{hour_str}_{cam_name}.mkv'
-        sidecar_path = dst_file.with_suffix('.json')
         if dst_file.exists():
-            if sidecar_enabled and not sidecar_path.exists():
-                start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
-                start_ts = start_utc.timestamp()
-                end_ts = start_ts + 3600
-                segments = fetch_segments(
-                    db_path=db_path,
-                    camera=cam_name,
-                    start_ts=start_ts,
-                    end_ts=end_ts,
-                )
-                segments = enrich_segments_with_audio(segments, dst_file)
-                sidecar = build_sidecar(
-                    camera=cam_name,
-                    start_utc=start_utc,
-                    segments=segments,
-                )
-                write_sidecar(sidecar_path, sidecar)
             continue
 
         total_inputs += len(grouped_recordings)
         total_size += ffmpeg(grouped_recordings, dst_file)
-        if sidecar_enabled:
-            start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
-            start_ts = start_utc.timestamp()
-            end_ts = start_ts + 3600
-            segments = fetch_segments(
-                db_path=db_path,
-                camera=cam_name,
-                start_ts=start_ts,
-                end_ts=end_ts,
-            )
-            segments = enrich_segments_with_audio(segments, dst_file)
-            sidecar = build_sidecar(
-                camera=cam_name,
-                start_utc=start_utc,
-                segments=segments,
-            )
+
+        # Generate sidecar JSON file
+        sidecar_path = dst_file.with_suffix('.json')
+        start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
+        sidecar = generate_sidecar(
+            db_path=db_path,
+            recording_path=dst_file,
+            camera=cam_name,
+            start_utc=start_utc,
+        )
+        if sidecar is not None:
             write_sidecar(sidecar_path, sidecar)
 
     print(f'Total size: {format_size(total_size)}')

@@ -4,9 +4,7 @@ from pathlib import Path
 import click
 from tqdm import tqdm
 
-from fricat.sidecar import build_sidecar
-from fricat.sidecar import enrich_segments_with_audio
-from fricat.sidecar import fetch_segments
+from fricat.sidecar import generate_sidecar
 from fricat.sidecar import write_sidecar
 from fricat.utils import parse_recording_path
 
@@ -52,23 +50,15 @@ def main(
             skipped += 1
             continue
         start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
-        start_ts = start_utc.timestamp()
-        end_ts = start_ts + 3600
-        segments = fetch_segments(
+        sidecar = generate_sidecar(
             db_path=db_path,
-            camera=camera,
-            start_ts=start_ts,
-            end_ts=end_ts,
-        )
-        if not segments:
-            skipped += 1
-            continue
-        segments = enrich_segments_with_audio(segments, recording)
-        sidecar = build_sidecar(
+            recording_path=recording,
             camera=camera,
             start_utc=start_utc,
-            segments=segments,
         )
+        if sidecar is None:
+            skipped += 1
+            continue
         write_sidecar(sidecar_path, sidecar)
         written += 1
 

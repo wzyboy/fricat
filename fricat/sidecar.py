@@ -179,6 +179,30 @@ def build_sidecar(
     return payload
 
 
+def generate_sidecar(
+    db_path: Path,
+    recording_path: Path,
+    camera: str,
+    start_utc: datetime,
+) -> dict[str, object] | None:
+    start_ts = start_utc.timestamp()
+    end_ts = start_ts + 3600
+    segments = fetch_segments(
+        db_path=db_path,
+        camera=camera,
+        start_ts=start_ts,
+        end_ts=end_ts,
+    )
+    if not segments:
+        return None
+    segments = enrich_segments_with_audio(segments, recording_path)
+    return build_sidecar(
+        camera=camera,
+        start_utc=start_utc,
+        segments=segments,
+    )
+
+
 def write_sidecar(sidecar_path: Path, data: dict[str, object]) -> None:
     sidecar_path.parent.mkdir(parents=True, exist_ok=True)
     with sidecar_path.open('w', encoding='utf-8') as handle:
