@@ -4,6 +4,7 @@ from pathlib import Path
 import click
 
 from fricat.sidecar import build_sidecar
+from fricat.sidecar import enrich_segments_with_audio
 from fricat.sidecar import fetch_segments
 from fricat.sidecar import write_sidecar
 
@@ -86,6 +87,7 @@ def main(
             start_ts=start_ts,
             end_ts=end_ts,
         )
+        segments = enrich_segments_with_audio(segments, recording)
         if not segments:
             skipped += 1
             continue

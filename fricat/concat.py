@@ -13,6 +13,7 @@ import click
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
 from fricat.sidecar import build_sidecar
+from fricat.sidecar import enrich_segments_with_audio
 from fricat.sidecar import fetch_segments
 from fricat.sidecar import write_sidecar
 
@@ -113,6 +114,7 @@ def main(
                     start_ts=start_ts,
                     end_ts=end_ts,
                 )
+                segments = enrich_segments_with_audio(segments, dst_file)
                 sidecar = build_sidecar(
                     camera=cam_name,
                     start_utc=start_utc,
@@ -133,6 +135,7 @@ def main(
                 start_ts=start_ts,
                 end_ts=end_ts,
             )
+            segments = enrich_segments_with_audio(segments, dst_file)
             sidecar = build_sidecar(
                 camera=cam_name,
                 start_utc=start_utc,
