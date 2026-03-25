@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
+from tqdm import tqdm
 
 from fricat.sidecar import build_sidecar
 from fricat.sidecar import enrich_segments_with_audio
@@ -69,7 +70,7 @@ def main(
 
     written = 0
     skipped = 0
-    for recording in recordings:
+    for recording in tqdm(recordings):
         parsed = _parse_recording_path(archive_root, recording)
         if not parsed:
             continue
