@@ -19,9 +19,9 @@ def parse_args() -> argparse.Namespace:
         help='Root directory to scan recursively for JSON files',
     )
     parser.add_argument(
-        '--dry-run',
+        '--delete',
         action='store_true',
-        help='Show which files would be deleted without deleting them',
+        help='Actually delete files instead of reporting what would be deleted',
     )
     return parser.parse_args()
 
@@ -63,7 +63,7 @@ def main() -> int:
             continue
 
         deleted += 1
-        if args.dry_run:
+        if not args.delete:
             print(f'DELETE {path} (dry-run)')
             continue
 
