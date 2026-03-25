@@ -87,10 +87,10 @@ def main(
             start_ts=start_ts,
             end_ts=end_ts,
         )
-        segments = enrich_segments_with_audio(segments, recording)
         if not segments:
             skipped += 1
             continue
+        segments = enrich_segments_with_audio(segments, recording)
         sidecar = build_sidecar(
             camera=camera,
             start_utc=start_utc,
