@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fricat.utils import parse_recording_path
 
 
 # Legacy files were using local time in filenames, while newer files are using
@@ -28,37 +29,6 @@ class Recording:
     start_utc: datetime
     path: Path
     meta_path: Path | None
-
-
-def _parse_recording_path(root: Path, path: Path) -> tuple[str, str, str] | None:
-    """Parse archive paths like YYYY-MM-DD/HH_CAMERA.mkv.
-
-    Example:
-        root=/archive, path=/archive/2026-03-29/11_CAM1.mkv
-        -> ('2026-03-29', '11', 'CAM1')
-    """
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return None
-    if len(rel.parts) != 2:
-        return None
-    date_str = rel.parts[0]
-    file_name = rel.parts[1]
-    try:
-        datetime.fromisoformat(f'{date_str} 00:00:00')
-    except ValueError:
-        return None
-    if not file_name.endswith('.mkv'):
-        return None
-    base = file_name[:-4]
-    if '_' not in base:
-        return None
-    hour_str, camera = base.split('_', 1)
-    if len(hour_str) != 2 or not hour_str.isdigit():
-        return None
-    return date_str, hour_str, camera
-
 
 def get_archive_root() -> Path:
     root = os.environ.get('FRICAT_ARCHIVE_ROOT')
@@ -77,7 +47,7 @@ def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
 def scan_recordings(root: Path) -> list[Recording]:
     recordings: list[Recording] = []
     for path in root.rglob('*.mkv'):
-        parsed = _parse_recording_path(root, path)
+        parsed = parse_recording_path(root, path)
         if not parsed:
             continue
         date_str, hour_str, camera = parsed

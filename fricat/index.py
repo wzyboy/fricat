@@ -8,35 +8,7 @@ from fricat.sidecar import build_sidecar
 from fricat.sidecar import enrich_segments_with_audio
 from fricat.sidecar import fetch_segments
 from fricat.sidecar import write_sidecar
-
-def _parse_recording_path(root: Path, path: Path) -> tuple[str, str, str] | None:
-    """Parse archive paths like YYYY-MM-DD/HH_CAMERA.mkv.
-
-    Example:
-        root=/archive, path=/archive/2026-03-29/11_CAM1.mkv
-        -> ('2026-03-29', '11', 'CAM1')
-    """
-    try:
-        rel = path.relative_to(root)
-    except ValueError:
-        return None
-    if len(rel.parts) != 2:
-        return None
-    date_str = rel.parts[0]
-    file_name = rel.parts[1]
-    try:
-        datetime.fromisoformat(f'{date_str} 00:00:00')
-    except ValueError:
-        return None
-    if not file_name.endswith('.mkv'):
-        return None
-    base = file_name[:-4]
-    if '_' not in base:
-        return None
-    hour_str, camera = base.split('_', 1)
-    if len(hour_str) != 2 or not hour_str.isdigit():
-        return None
-    return date_str, hour_str, camera
+from fricat.utils import parse_recording_path
 
 
 @click.command()
@@ -71,7 +43,7 @@ def main(
     written = 0
     skipped = 0
     for recording in tqdm(recordings):
-        parsed = _parse_recording_path(archive_root, recording)
+        parsed = parse_recording_path(archive_root, recording)
         if not parsed:
             continue
         date_str, hour_str, camera = parsed
