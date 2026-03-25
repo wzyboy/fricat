@@ -15,9 +15,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         'root',
-        nargs='?',
         type=Path,
-        default=Path('/nfs/eureka/NVR/'),
         help='Root directory to scan recursively for JSON files',
     )
     parser.add_argument(
