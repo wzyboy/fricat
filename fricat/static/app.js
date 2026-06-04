@@ -1,446 +1,495 @@
-const calendarEl = document.getElementById('calendar');
-const recordingsEl = document.getElementById('recordings');
-const selectedDateEl = document.getElementById('selected-date');
-const timezoneEl = document.getElementById('timezone');
-const cameraEl = document.getElementById('camera');
-const monthEl = document.getElementById('month');
-const playerEl = document.getElementById('player');
-const playerMetaEl = document.getElementById('player-meta');
-const heatbarEl = document.getElementById('heatbar');
-const playerPanelEl = document.getElementById('player-panel');
-const prevRecordingEl = document.getElementById('prev-recording');
-const nextRecordingEl = document.getElementById('next-recording');
-const back10El = document.getElementById('back-10s');
-const forward10El = document.getElementById('forward-10s');
-const playbackRateEl = document.getElementById('playback-rate');
+/**
+ * Fricat Design 2.0 - Forensic NVR Viewer
+ */
 
-let recordings = [];
-let recordingsByDay = new Map();
-let selectedDayKey = null;
-let selectedDayDate = null;
-let activeSegments = [];
-let heatbarBins = [];
-let currentDayRecordings = [];
-let selectedRecordingPath = null;
+class FricatApp {
+    constructor() {
+        this.state = {
+            currentDate: document.getElementById('date-picker')?.value || new Date().toISOString().split('T')[0],
+            currentCamera: 'CAM1',
+            currentHour: null,
+            recordings: [],
+            isPlaying: false,
+            autoplay: true
+        };
 
-function pad(value) {
-  return String(value).padStart(2, '0');
-}
+        // Custom calendar state
+        this.recordedDates = [];
+        this.calendarDate = new Date(this.state.currentDate);
 
-function localDayKey(date) {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
+        this.elements = {
+            video: document.getElementById('main-video'),
+            datePicker: document.getElementById('date-picker'),
+            currentDateLabel: document.getElementById('current-date-label'),
+            hourList: document.getElementById('hour-list'),
+            videoTimestamp: document.getElementById('video-timestamp'),
+            copyTimestampBtn: document.getElementById('copy-timestamp-btn'),
+            playPauseBtn: document.getElementById('play-pause-btn'),
+            motionCanvas: document.getElementById('motion-canvas'),
+            soundCanvas: document.getElementById('sound-canvas'),
+            seekerLine: document.getElementById('seeker-line'),
+            autoplayToggle: document.getElementById('autoplay-toggle'),
+            cameraBtns: document.querySelectorAll('.camera-btn')
+        };
 
-function formatLocalTime(date) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatLocalDate(date) {
-  return date.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-}
-
-function monthStart(date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1);
-}
-
-function monthEnd(date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 1);
-}
-
-function setTimezoneLabel() {
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  timezoneEl.textContent = tz ? `Local time: ${tz}` : 'Local time';
-}
-
-async function fetchCameras() {
-  const response = await fetch('/api/cameras');
-  const cameras = await response.json();
-  cameraEl.innerHTML = '<option value="">All cameras</option>';
-  cameras.forEach((camera) => {
-    const option = document.createElement('option');
-    option.value = camera;
-    option.textContent = camera;
-    cameraEl.appendChild(option);
-  });
-}
-
-async function fetchRecordingsForMonth(date) {
-  const start = monthStart(date);
-  const end = monthEnd(date);
-  const params = new URLSearchParams({
-    start: (start.getTime() / 1000).toString(),
-    end: (end.getTime() / 1000).toString(),
-  });
-  if (cameraEl.value) {
-    params.set('camera', cameraEl.value);
-  }
-  const response = await fetch(`/api/recordings?${params.toString()}`);
-  recordings = await response.json();
-  recordingsByDay = new Map();
-  recordings.forEach((rec) => {
-    const recDate = new Date(rec.start_utc);
-    const key = localDayKey(recDate);
-    if (!recordingsByDay.has(key)) {
-      recordingsByDay.set(key, []);
-    }
-    recordingsByDay.get(key).push(rec);
-  });
-  recordingsByDay.forEach((dayRecs) =>
-    dayRecs.sort((a, b) => new Date(a.start_utc) - new Date(b.start_utc))
-  );
-}
-
-function renderCalendar(date) {
-  calendarEl.innerHTML = '';
-  const start = monthStart(date);
-  const daysInMonth = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-  const leadingEmpty = (start.getDay() + 6) % 7; // Monday first
-
-  for (let i = 0; i < leadingEmpty; i += 1) {
-    const empty = document.createElement('div');
-    empty.className = 'day empty';
-    calendarEl.appendChild(empty);
-  }
-
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const cellDate = new Date(date.getFullYear(), date.getMonth(), day);
-    const key = localDayKey(cellDate);
-    const dayRecs = recordingsByDay.get(key) || [];
-
-    const cell = document.createElement('div');
-    cell.className = 'day';
-    if (key === selectedDayKey) {
-      cell.classList.add('active');
-    }
-    const header = document.createElement('div');
-    header.className = 'day-header';
-    header.textContent = day;
-    cell.appendChild(header);
-
-    if (dayRecs.length > 0) {
-      const badge = document.createElement('div');
-      badge.className = 'day-count';
-      badge.textContent = `${dayRecs.length} hr`;
-      cell.appendChild(badge);
+        this.init();
     }
 
-    cell.addEventListener('click', () => {
-      if (dayRecs.length === 0) {
-        return;
-      }
-      selectedDayKey = key;
-      selectedDayDate = cellDate;
-      renderCalendar(date);
-      renderRecordingsForDay(key, cellDate);
-      updateUrl();
-    });
-
-    calendarEl.appendChild(cell);
-  }
-}
-
-function renderRecordingsForDay(key, date) {
-  selectedDateEl.textContent = formatLocalDate(date);
-  recordingsEl.innerHTML = '';
-  const dayRecs = recordingsByDay.get(key) || [];
-  currentDayRecordings = dayRecs;
-  if (dayRecs.length === 0) {
-    recordingsEl.textContent = 'No recordings.';
-    return;
-  }
-  dayRecs.forEach((rec) => {
-    const row = document.createElement('div');
-    row.className = 'recording';
-
-    const time = document.createElement('div');
-    time.className = 'recording-time';
-    const recDate = new Date(rec.start_utc);
-    time.textContent = formatLocalTime(recDate);
-
-    const camera = document.createElement('div');
-    camera.className = 'recording-camera';
-    camera.textContent = rec.camera;
-
-    row.appendChild(time);
-    row.appendChild(camera);
-
-    row.addEventListener('click', () => {
-      setSelectedRecording(rec, recDate);
-    });
-
-    recordingsEl.appendChild(row);
-  });
-}
-
-function setSelectedRecording(rec, recDate) {
-  const src = `/media/${rec.path}`;
-  selectedRecordingPath = rec.path;
-  playerPanelEl.classList.remove('empty');
-  playerEl.src = src;
-  playerEl.play();
-  playerMetaEl.textContent = `${rec.camera} • ${formatLocalDate(recDate)} ${formatLocalTime(recDate)}`;
-  loadSidecar(rec.path);
-  updateUrl();
-  updatePlaybackNav();
-}
-
-function clearPlayer() {
-  playerPanelEl.classList.add('empty');
-  playerEl.removeAttribute('src');
-  playerEl.load();
-  playerMetaEl.textContent = '';
-  heatbarBins = [];
-  renderHeatbar();
-}
-
-function updatePlaybackNav() {
-  const index = currentDayRecordings.findIndex((rec) => rec.path === selectedRecordingPath);
-  const hasPrev = index > 0;
-  const hasNext = index >= 0 && index < currentDayRecordings.length - 1;
-  prevRecordingEl.disabled = !hasPrev;
-  nextRecordingEl.disabled = !hasNext;
-}
-
-function handlePrevNext(direction) {
-  const index = currentDayRecordings.findIndex((rec) => rec.path === selectedRecordingPath);
-  if (index === -1) {
-    return;
-  }
-  const nextIndex = index + direction;
-  if (nextIndex < 0 || nextIndex >= currentDayRecordings.length) {
-    return;
-  }
-  const rec = currentDayRecordings[nextIndex];
-  const recDate = new Date(rec.start_utc);
-  setSelectedRecording(rec, recDate);
-}
-
-function buildHeatbarBins(segments) {
-  const bins = new Array(360).fill(0);
-  segments.forEach((segment) => {
-    const motion = Number(segment.motion ?? 0);
-    if (!Number.isFinite(segment.offset) || !Number.isFinite(segment.duration)) {
-      return;
+    async init() {
+        this.bindEvents();
+        this.initCalendar();
+        await this.loadRecordedDates();
+        await this.loadDay();
+        this.renderCalendar();
+        this.updateUI();
     }
-    const start = Math.max(0, segment.offset);
-    const end = Math.min(3600, segment.offset + segment.duration);
-    const startBin = Math.floor(start / 10);
-    const endBin = Math.min(359, Math.floor((end - 0.001) / 10));
-    for (let i = startBin; i <= endBin; i += 1) {
-      bins[i] = Math.max(bins[i], motion);
+
+    bindEvents() {
+        this.elements.datePicker.addEventListener('change', (e) => {
+            this.state.currentDate = e.target.value;
+            this.calendarDate = new Date(this.state.currentDate);
+            this.loadDay();
+            this.renderCalendar();
+        });
+
+        this.elements.cameraBtns.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                this.elements.cameraBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.state.currentCamera = btn.dataset.camera;
+                await this.loadRecordedDates();
+                await this.loadDay();
+                this.renderCalendar();
+            });
+        });
+
+        this.elements.playPauseBtn.addEventListener('click', () => this.togglePlay());
+        
+        // Seek Buttons
+        document.getElementById('rew-10s').onclick = () => this.seek(-10);
+        document.getElementById('ff-10s').onclick = () => this.seek(10);
+        document.getElementById('rew-60s').onclick = () => this.seek(-60);
+        document.getElementById('ff-60s').onclick = () => this.seek(60);
+        document.getElementById('rew-5m').onclick = () => this.seek(-300);
+        document.getElementById('ff-5m').onclick = () => this.seek(300);
+
+        document.getElementById('next-hour').onclick = () => this.navigateHour(1);
+        document.getElementById('prev-hour').onclick = () => this.navigateHour(-1);
+
+        this.elements.autoplayToggle.onchange = (e) => this.state.autoplay = e.target.checked;
+
+        this.elements.video.ontimeupdate = () => this.onTimeUpdate();
+        this.elements.video.onended = () => {
+            if (this.state.autoplay) this.navigateHour(1);
+        };
+
+        this.elements.copyTimestampBtn.onclick = () => this.copyTimestamp();
+
+        document.getElementById('screenshot-btn').onclick = () => this.takeScreenshot();
+        document.getElementById('fullscreen-btn').onclick = () => {
+            if (this.elements.video.requestFullscreen) this.elements.video.requestFullscreen();
+        };
+
+        // Activity Seeker Interaction
+        document.getElementById('activity-charts').onclick = (e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const percent = x / rect.width;
+            if (this.elements.video.duration) {
+                this.elements.video.currentTime = this.elements.video.duration * percent;
+            }
+        };
     }
-  });
-  return bins;
+
+    getLocalParts(date) {
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/Vancouver',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hourCycle: 'h23'
+        });
+        const parts = formatter.formatToParts(new Date(date));
+        const p = {};
+        for (const part of parts) {
+            p[part.type] = part.value;
+        }
+        return p;
+    }
+
+    async loadRecordedDates() {
+        try {
+            const res = await fetch(`/api/recorded_dates?camera=${this.state.currentCamera}`);
+            if (res.ok) {
+                const data = await res.json();
+                this.recordedDates = Array.isArray(data) ? data : [];
+            } else {
+                this.recordedDates = [];
+            }
+        } catch (err) {
+            console.error('Failed to load recorded dates', err);
+            this.recordedDates = [];
+        }
+    }
+
+    initCalendar() {
+        const prevBtn = document.getElementById('cal-prev-month');
+        const nextBtn = document.getElementById('cal-next-month');
+        if (prevBtn) {
+            prevBtn.onclick = () => {
+                this.calendarDate.setMonth(this.calendarDate.getMonth() - 1);
+                this.renderCalendar();
+            };
+        }
+        if (nextBtn) {
+            nextBtn.onclick = () => {
+                this.calendarDate.setMonth(this.calendarDate.getMonth() + 1);
+                this.renderCalendar();
+            };
+        }
+    }
+
+    renderCalendar() {
+        const calMonthYear = document.getElementById('cal-month-year');
+        const calDaysGrid = document.getElementById('calendar-days-grid');
+        if (!calMonthYear || !calDaysGrid) return;
+
+        const year = this.calendarDate.getFullYear();
+        const month = this.calendarDate.getMonth();
+
+        // Update header month & year
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        calMonthYear.textContent = `${monthNames[month]} ${year}`;
+
+        // Clear grid
+        calDaysGrid.innerHTML = '';
+
+        // Day of week of the first of the month
+        const firstDay = new Date(year, month, 1).getDay();
+        // Number of days in the month
+        const numDays = new Date(year, month + 1, 0).getDate();
+
+        // Empty cells for preceding weekdays
+        for (let i = 0; i < firstDay; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'cal-day-cell empty';
+            calDaysGrid.appendChild(cell);
+        }
+
+        // Selected date parts
+        const selectedParts = this.state.currentDate.split('-');
+        const selYear = parseInt(selectedParts[0]);
+        const selMonth = parseInt(selectedParts[1]) - 1;
+        const selDay = parseInt(selectedParts[2]);
+
+        // Add cells for all days in the month
+        for (let day = 1; day <= numDays; day++) {
+            const cell = document.createElement('button');
+            cell.className = 'cal-day-cell';
+            cell.textContent = day;
+
+            const dateStr = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+
+            // Check if selected
+            if (year === selYear && month === selMonth && day === selDay) {
+                cell.classList.add('active');
+            }
+
+            // Check if it has recordings
+            if (Array.isArray(this.recordedDates) && this.recordedDates.includes(dateStr)) {
+                cell.classList.add('has-recordings');
+            }
+
+            cell.onclick = () => {
+                this.state.currentDate = dateStr;
+                this.elements.datePicker.value = dateStr;
+                
+                // Dispatch event so any existing listeners trigger
+                const event = new Event('change');
+                this.elements.datePicker.dispatchEvent(event);
+                
+                this.renderCalendar();
+            };
+
+            calDaysGrid.appendChild(cell);
+        }
+    }
+
+    async loadDay() {
+        const parts = this.state.currentDate.split('-');
+        const start = Date.UTC(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])) / 1000;
+        // Fetch 12 hours before and 12 hours after the UTC day range to ensure we capture all files corresponding to this local day
+        const queryStart = start - 43200;
+        const queryEnd = start + 86400 + 43200;
+        
+        try {
+            const res = await fetch(`/api/recordings?start=${queryStart}&end=${queryEnd}&camera=${this.state.currentCamera}`);
+            const allRecordings = await res.json();
+            
+            // Filter recordings whose start time in local Vancouver time is on the current date
+            this.state.recordings = allRecordings.filter(r => {
+                const lp = this.getLocalParts(r.start_utc);
+                const localDateStr = `${lp.year}-${lp.month}-${lp.day}`;
+                return localDateStr === this.state.currentDate;
+            });
+
+            this.renderHourList();
+            
+            // Auto-load first recording if available
+            if (this.state.recordings.length > 0) {
+                this.loadRecording(this.state.recordings[0]);
+            } else {
+                this.clearVideo();
+            }
+        } catch (err) {
+            console.error('Failed to load recordings', err);
+        }
+    }
+
+    renderHourList() {
+        this.elements.hourList.innerHTML = '';
+        const parts = this.state.currentDate.split('-');
+        const dateObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        this.elements.currentDateLabel.textContent = dateObj.toLocaleDateString('en-US', { 
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
+        });
+
+        // 24 Hour Map
+        for (let h = 0; h < 24; h++) {
+            const hourStr = h.toString().padStart(2, '0');
+            const recording = this.state.recordings.find(r => {
+                const lp = this.getLocalParts(r.start_utc);
+                return parseInt(lp.hour) === h;
+            });
+
+            const daylightClass = this.getDaylightClass(h);
+
+            const item = document.createElement('div');
+            item.className = `hour-item ${recording ? 'available' : 'empty'} ${daylightClass}`;
+            if (recording && recording.path === this.state.currentHour?.path) item.classList.add('active');
+            
+            let miniBarHTML = '';
+            if (recording && recording.profile) {
+                const motionBars = recording.profile.motion.map((val, i) => {
+                    const x = (i / 24) * 100;
+                    const height = (val / 100) * 100;
+                    return `<rect x="${x}%" y="${100 - height}%" width="3%" height="${height}%" fill="#F97316" opacity="0.6"/>`;
+                }).join('');
+
+                const soundBars = recording.profile.sound.map((val, i) => {
+                    const x = (i / 24) * 100;
+                    const height = (val / 100) * 100;
+                    return `<rect x="${x}%" y="${100 - height}%" width="3%" height="${height}%" fill="#38BDF8" opacity="0.4"/>`;
+                }).join('');
+
+                miniBarHTML = `
+                    <svg width="100%" height="100%" preserveAspectRatio="none">
+                        ${motionBars}
+                        ${soundBars}
+                    </svg>
+                `;
+            }
+
+            item.innerHTML = `
+                <span class="hour-label">${hourStr}:00</span>
+                <div class="mini-activity-bar">
+                    ${miniBarHTML}
+                </div>
+            `;
+
+            if (recording) {
+                item.onclick = () => this.loadRecording(recording);
+            }
+            this.elements.hourList.appendChild(item);
+        }
+    }
+
+    getDaylightClass(hour) {
+        if (hour >= 21 || hour < 5) return 'daylight-night';
+        if (hour >= 5 && hour < 8) return 'daylight-dawn';
+        if (hour >= 18 && hour < 21) return 'daylight-dawn'; // Dusk is similar to dawn
+        if (hour === 12) return 'daylight-noon';
+        return 'daylight-day';
+    }
+
+    async loadRecording(recording) {
+        this.state.currentHour = recording;
+        this.elements.video.src = `/media/${recording.path}`;
+        this.elements.video.play();
+        this.state.isPlaying = true;
+        this.updateUI();
+        this.renderHourList();
+
+        // Load Activity Meta
+        if (recording.has_meta) {
+            this.loadActivity(recording.path);
+        } else {
+            this.clearActivity();
+        }
+    }
+
+    async loadActivity(path) {
+        try {
+            const res = await fetch(`/api/meta?path=${path}`);
+            const data = await res.json();
+            this.drawActivity(data);
+        } catch (e) {
+            console.error('Meta load failed', e);
+        }
+    }
+
+    drawActivity(data) {
+        const motionCanvas = this.elements.motionCanvas;
+        const soundCanvas = this.elements.soundCanvas;
+        const motionCtx = motionCanvas.getContext('2d');
+        const soundCtx = soundCanvas.getContext('2d');
+        const w = motionCanvas.width = motionCanvas.offsetWidth;
+        const h = motionCanvas.height = motionCanvas.offsetHeight;
+        soundCanvas.width = w;
+        soundCanvas.height = h;
+
+        motionCtx.clearRect(0, 0, w, h);
+        soundCtx.clearRect(0, 0, w, h);
+
+        const duration = 3600; // 1 hour focus
+
+        if (!data || !data.segments) return;
+
+        // Motion (Orange) - Tactical Bar Chart
+        motionCtx.fillStyle = 'rgba(249, 115, 22, 0.4)'; // Transparent orange fill
+        motionCtx.strokeStyle = '#F97316'; // Bright orange border
+        motionCtx.lineWidth = 1;
+
+        data.segments.forEach(seg => {
+            const x = (seg.offset / duration) * w;
+            const width = (seg.duration / duration) * w;
+            const val = seg.motion || 0; // 0 to 100
+            const barHeight = (val / 100) * (h - 20);
+            const y = h - 10 - barHeight;
+            
+            motionCtx.fillRect(x, y, Math.max(width, 1), barHeight);
+            motionCtx.strokeRect(x, y, Math.max(width, 1), barHeight);
+        });
+
+        // Sound (Blue) - Continuous glowing waveform
+        soundCtx.strokeStyle = '#38BDF8';
+        soundCtx.lineWidth = 1.5;
+        soundCtx.beginPath();
+
+        data.segments.forEach((seg, i) => {
+            const x = ((seg.offset + seg.duration / 2) / duration) * w;
+            const val = seg.audio_dbfs || -80;
+            const normalized = Math.max(0, (val + 80) / 80); // Normalize dBFS -80 to 0 as 0 to 1
+            const y = h - 10 - (normalized * (h - 20));
+
+            if (i === 0) {
+                soundCtx.moveTo(x, y);
+            } else {
+                soundCtx.lineTo(x, y);
+            }
+        });
+        soundCtx.stroke();
+
+        // Glowing gradient under sound line
+        if (data.segments.length > 0) {
+            soundCtx.lineTo(w, h - 10);
+            soundCtx.lineTo(0, h - 10);
+            soundCtx.closePath();
+            const grad = soundCtx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, 'rgba(56, 189, 248, 0.15)');
+            grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+            soundCtx.fillStyle = grad;
+            soundCtx.fill();
+        }
+    }
+
+
+    onTimeUpdate() {
+        const v = this.elements.video;
+        if (!v.duration) return;
+
+        // Update Seeker
+        const percent = (v.currentTime / v.duration) * 100;
+        this.elements.seekerLine.style.left = `${percent}%`;
+
+        // Update Timestamp
+        if (this.state.currentHour) {
+            const baseTime = new Date(this.state.currentHour.start_utc);
+            const currentTime = new Date(baseTime.getTime() + v.currentTime * 1000);
+            const lp = this.getLocalParts(currentTime);
+            this.elements.videoTimestamp.textContent = `${lp.year}-${lp.month}-${lp.day} ${lp.hour}:${lp.minute}:${lp.second}`;
+        }
+    }
+
+    togglePlay() {
+        const v = this.elements.video;
+        if (v.paused) {
+            v.play();
+            this.state.isPlaying = true;
+        } else {
+            v.pause();
+            this.state.isPlaying = false;
+        }
+        this.updateUI();
+    }
+
+    seek(seconds) {
+        this.elements.video.currentTime += seconds;
+    }
+
+    navigateHour(delta) {
+        if (!this.state.currentHour) return;
+        const currentIdx = this.state.recordings.findIndex(r => r.path === this.state.currentHour.path);
+        const nextIdx = currentIdx + delta;
+        if (nextIdx >= 0 && nextIdx < this.state.recordings.length) {
+            this.loadRecording(this.state.recordings[nextIdx]);
+        }
+    }
+
+    copyTimestamp() {
+        const ts = this.elements.videoTimestamp.textContent;
+        navigator.clipboard.writeText(ts).then(() => {
+            const oldText = this.elements.copyTimestampBtn.textContent;
+            this.elements.copyTimestampBtn.textContent = 'Copied!';
+            setTimeout(() => this.elements.copyTimestampBtn.textContent = oldText, 2000);
+        });
+    }
+
+    takeScreenshot() {
+        const v = this.elements.video;
+        const canvas = document.createElement('canvas');
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        canvas.getContext('2d').drawImage(v, 0, 0);
+        const link = document.createElement('a');
+        link.download = `fricat_${this.elements.videoTimestamp.textContent.replace(/[: ]/g, '_')}.jpg`;
+        link.href = canvas.toDataURL('image/jpeg', 0.9);
+        link.click();
+    }
+
+    updateUI() {
+        this.elements.playPauseBtn.innerHTML = this.state.isPlaying ? 
+            '<svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M6.103 1.005A1 1 0 0 1 7 2v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h2l.103.005ZM4 14h2V2H4v12Zm8.102-12.995A1 1 0 0 1 13 2v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h2l.102.005ZM10 14h2V2h-2v12Z" clip-rule="evenodd"/></svg>' : 
+            '<svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M3 2a1 1 0 0 1 1.514-.858l10 6a1 1 0 0 1 0 1.715l-10 6A1 1 0 0 1 3 14V2Zm1 12 10-6L4 2v12Z" clip-rule="evenodd"/></svg>';
+    }
+
+    clearVideo() {
+        this.elements.video.src = '';
+        this.elements.videoTimestamp.textContent = '--:--:--';
+        this.clearActivity();
+    }
+
+    clearActivity() {
+        const motionCtx = this.elements.motionCanvas.getContext('2d');
+        const soundCtx = this.elements.soundCanvas.getContext('2d');
+        motionCtx.clearRect(0, 0, this.elements.motionCanvas.width, this.elements.motionCanvas.height);
+        soundCtx.clearRect(0, 0, this.elements.soundCanvas.width, this.elements.soundCanvas.height);
+    }
 }
 
-function renderHeatbar() {
-  const bins = heatbarBins;
-  const ctx = heatbarEl.getContext('2d');
-  const width = heatbarEl.clientWidth;
-  const height = heatbarEl.clientHeight;
-  const scale = window.devicePixelRatio || 1;
-  heatbarEl.width = Math.floor(width * scale);
-  heatbarEl.height = Math.floor(height * scale);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.scale(scale, scale);
-
-  ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#e5ddcf';
-  ctx.fillRect(0, 0, width, height);
-
-  if (!bins.length) {
-    return;
-  }
-  const nonZero = bins.filter((value) => value > 0);
-  if (nonZero.length === 0) {
-    return;
-  }
-  const scaled = bins.map((value) => Math.log1p(value));
-  const scaledNonZero = scaled.filter((value) => value > 0).sort((a, b) => a - b);
-  const maxValue = scaledNonZero[scaledNonZero.length - 1];
-  const percentileIndex = Math.floor(0.85 * (scaledNonZero.length - 1));
-  const floorValue = scaledNonZero[Math.max(0, percentileIndex)];
-  const absoluteFloor = Math.log1p(50);
-  const threshold = Math.max(floorValue, absoluteFloor);
-  const normalized = scaled.map((value) => (value >= threshold ? value / maxValue : 0));
-
-  const smoothWindow = 5;
-  const smoothed = normalized.map((_, index) => {
-    let sum = 0;
-    let count = 0;
-    for (let offset = -Math.floor(smoothWindow / 2); offset <= Math.floor(smoothWindow / 2); offset += 1) {
-      const idx = index + offset;
-      if (idx < 0 || idx >= normalized.length) {
-        continue;
-      }
-      sum += normalized[idx];
-      count += 1;
-    }
-    return count > 0 ? sum / count : 0;
-  });
-
-  const step = width / (smoothed.length - 1);
-  ctx.beginPath();
-  smoothed.forEach((value, index) => {
-    const x = index * step;
-    const y = height - value * height;
-    if (index === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
-  });
-  ctx.strokeStyle = 'rgba(42, 93, 159, 0.9)';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.lineTo(width, height);
-  ctx.lineTo(0, height);
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(42, 93, 159, 0.18)';
-  ctx.fill();
-}
-
-function seekFromHeatbar(event) {
-  if (!playerEl.src) {
-    return;
-  }
-  const rect = heatbarEl.getBoundingClientRect();
-  const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-  const duration = Number.isFinite(playerEl.duration) ? playerEl.duration : 3600;
-  playerEl.currentTime = ratio * duration;
-  playerEl.play();
-}
-
-async function loadSidecar(path) {
-  try {
-    const response = await fetch(`/api/meta?path=${encodeURIComponent(path)}`);
-    if (!response.ok) {
-      heatbarBins = [];
-      renderHeatbar();
-      return;
-    }
-    const data = await response.json();
-    activeSegments = Array.isArray(data.segments) ? data.segments : [];
-    heatbarBins = buildHeatbarBins(activeSegments);
-    renderHeatbar();
-  } catch (error) {
-    heatbarBins = [];
-    renderHeatbar();
-  }
-}
-
-function updateUrl() {
-  const params = new URLSearchParams();
-  if (monthEl.value) {
-    params.set('month', monthEl.value);
-  }
-  if (cameraEl.value) {
-    params.set('camera', cameraEl.value);
-  }
-  if (selectedDayKey) {
-    params.set('day', selectedDayKey);
-  }
-  if (selectedRecordingPath) {
-    params.set('path', selectedRecordingPath);
-  }
-  const next = `${window.location.pathname}?${params.toString()}`;
-  window.history.replaceState({}, '', next);
-}
-
-async function refresh() {
-  const value = monthEl.value;
-  const [year, month] = value.split('-').map((part) => Number(part));
-  const current = new Date(year, month - 1, 1);
-  await fetchRecordingsForMonth(current);
-  renderCalendar(current);
-  if (selectedDayDate) {
-    if (selectedDayDate.getFullYear() !== current.getFullYear() || selectedDayDate.getMonth() !== current.getMonth()) {
-      selectedDayKey = null;
-      selectedDayDate = null;
-      selectedRecordingPath = null;
-    }
-  }
-  if (selectedDayKey && recordingsByDay.has(selectedDayKey)) {
-    renderRecordingsForDay(selectedDayKey, selectedDayDate || new Date(selectedDayKey));
-    if (!currentDayRecordings.some((rec) => rec.path === selectedRecordingPath)) {
-      selectedRecordingPath = null;
-      clearPlayer();
-    }
-    updatePlaybackNav();
-  } else if (selectedDayKey) {
-    selectedDateEl.textContent = formatLocalDate(selectedDayDate || new Date(selectedDayKey));
-    recordingsEl.textContent = 'No recordings.';
-    currentDayRecordings = [];
-    selectedRecordingPath = null;
-    clearPlayer();
-    updatePlaybackNav();
-  } else {
-    selectedDateEl.textContent = 'Select a day';
-    recordingsEl.innerHTML = '';
-    currentDayRecordings = [];
-    selectedRecordingPath = null;
-    clearPlayer();
-  }
-  updateUrl();
-}
-
-function setDefaultMonth() {
-  const now = new Date();
-  monthEl.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
-}
-
-cameraEl.addEventListener('change', refresh);
-monthEl.addEventListener('change', refresh);
-window.addEventListener('resize', renderHeatbar);
-heatbarEl.addEventListener('click', seekFromHeatbar);
-prevRecordingEl.addEventListener('click', () => handlePrevNext(-1));
-nextRecordingEl.addEventListener('click', () => handlePrevNext(1));
-back10El.addEventListener('click', () => {
-  playerEl.currentTime = Math.max(0, playerEl.currentTime - 10);
-});
-forward10El.addEventListener('click', () => {
-  const duration = Number.isFinite(playerEl.duration) ? playerEl.duration : 3600;
-  playerEl.currentTime = Math.min(duration, playerEl.currentTime + 10);
-});
-playbackRateEl.addEventListener('change', () => {
-  playerEl.playbackRate = Number(playbackRateEl.value);
-});
-
-(async () => {
-  setTimezoneLabel();
-  const params = new URLSearchParams(window.location.search);
-  const month = params.get('month');
-  const camera = params.get('camera');
-  const day = params.get('day');
-  const path = params.get('path');
-
-  setDefaultMonth();
-  if (month) {
-    monthEl.value = month;
-  }
-
-  await fetchCameras();
-  if (camera) {
-    cameraEl.value = camera;
-  }
-  if (day) {
-    selectedDayKey = day;
-    selectedDayDate = new Date(day);
-  } else if (path) {
-    const parts = path.split('/');
-    if (parts.length >= 2) {
-      selectedDayKey = parts[0];
-      selectedDayDate = new Date(parts[0]);
-    }
-  }
-
-  await refresh();
-
-  if (path) {
-    const match = recordings.find((rec) => rec.path === path);
-    if (match) {
-      setSelectedRecording(match, new Date(match.start_utc));
-    }
-  }
-})();
+window.onload = () => {
+    window.app = new FricatApp();
+};

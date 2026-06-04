@@ -1,65 +1,123 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>fricat archive</title>
-    <link rel="stylesheet" href="/static/styles.css" />
-  </head>
-  <body>
-    <div class="page">
-      <header class="header">
-        <div class="title-block">
-          <h1>fricat archive</h1>
-          <p class="subtitle">Calendar view of merged recordings (local time)</p>
-        </div>
-        <div class="controls">
-          <label class="control">
-            <span>Camera</span>
-            <select id="camera"></select>
-          </label>
-          <label class="control">
-            <span>Month</span>
-            <input id="month" type="month" />
-          </label>
-        </div>
-      </header>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>fricat nvr | forensic viewer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Bar -->
+        <header class="top-bar">
+            <div class="site-info">
+                <span class="site-title">fricat</span>
+                <span class="site-location">America/Vancouver</span>
+                <span id="current-date-label" class="site-location">Monday, March 24, 2026</span>
+            </div>
+            <div class="camera-selector">
+                <button class="camera-btn active" data-camera="CAM1">CAM1</button>
+                <button class="camera-btn" data-camera="CAM2">CAM2</button>
+                <button class="camera-btn" data-camera="CAM3">CAM3</button>
+                <button class="camera-btn" data-camera="CAM4">CAM4</button>
+            </div>
+        </header>
 
-      <section class="calendar" id="calendar"></section>
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="calendar-container">
+                <!-- Native date picker, hidden but synced for compatibility -->
+                <input type="date" id="date-picker" value="2026-03-24" style="display: none;">
+                
+                <!-- Premium Custom Calendar -->
+                <div class="custom-calendar" id="custom-calendar">
+                    <div class="calendar-header">
+                        <button class="cal-nav-btn" id="cal-prev-month" title="Previous Month">
+                            <svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M11.3 1.3a1 1 0 0 1 0 1.4L6.4 8l4.9 5.3a1 1 0 1 1-1.4 1.4l-5.6-6a1 1 0 0 1 0-1.4l5.6-6a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+                        </button>
+                        <span class="calendar-month-year" id="cal-month-year">March 2026</span>
+                        <button class="cal-nav-btn" id="cal-next-month" title="Next Month">
+                            <svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M4.7 1.3a1 1 0 0 0 0 1.4L9.6 8 4.7 13.3a1 1 0 1 0 1.4 1.4l5.6-6a1 1 0 0 0 0-1.4l-5.6-6a1 1 0 0 0-1.4 0Z" clip-rule="evenodd"/></svg>
+                        </button>
+                    </div>
+                    <div class="calendar-weekdays">
+                        <span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span>
+                    </div>
+                    <div class="calendar-days" id="calendar-days-grid">
+                        <!-- Days dynamically rendered by JS -->
+                    </div>
+                </div>
+            </div>
+            <div class="history-container">
+                <div class="history-header">Activity History (24h)</div>
+                <div id="hour-list" class="hour-list">
+                    <!-- Hours injected by JS -->
+                </div>
+            </div>
+        </aside>
 
-      <div class="content">
-        <section class="details">
-          <div class="details-header">
-            <h2 id="selected-date">Select a day</h2>
-            <span id="timezone" class="timezone"></span>
-          </div>
-          <div id="recordings" class="recordings"></div>
-        </section>
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Video Section -->
+            <section class="video-section">
+                <div class="video-hud-top">
+                    <div id="video-timestamp" class="timestamp-display">2026-03-24 00:00:00</div>
+                    <button id="copy-timestamp-btn" class="copy-btn">Copy Timestamp</button>
+                </div>
+                <div class="video-container">
+                    <video id="main-video" crossorigin="anonymous">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+            </section>
 
-        <section class="player empty" id="player-panel">
-          <div class="player-empty" id="player-empty">Select a recording to start playback.</div>
-          <video id="player" controls preload="metadata"></video>
-          <canvas id="heatbar" class="heatbar" aria-hidden="true"></canvas>
-          <div class="player-controls">
-            <button type="button" id="prev-recording">Prev</button>
-            <button type="button" id="next-recording">Next</button>
-            <button type="button" id="back-10s">-10s</button>
-            <button type="button" id="forward-10s">+10s</button>
-            <label class="speed-control">
-              <span>Speed</span>
-              <select id="playback-rate">
-                <option value="1">1x</option>
-                <option value="1.5">1.5x</option>
-                <option value="2">2x</option>
-                <option value="3">3x</option>
-              </select>
-            </label>
-          </div>
-          <div id="player-meta" class="player-meta"></div>
-        </section>
-      </div>
+            <!-- Activity Area -->
+            <section id="activity-charts" class="activity-section">
+                <canvas id="motion-canvas" class="activity-canvas"></canvas>
+                <canvas id="sound-canvas" class="activity-canvas" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                <div id="seeker-line" class="seeker-line" style="left: 0;"></div>
+            </section>
+
+            <!-- Controls Bar -->
+            <footer class="controls-bar">
+                <!-- Playback Group -->
+                <div class="control-group">
+                    <button id="play-pause-btn" class="btn-ctrl primary">
+                        <svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M3 2a1 1 0 0 1 1.514-.858l10 6a1 1 0 0 1 0 1.715l-10 6A1 1 0 0 1 3 14V2Zm1 12 10-6L4 2v12Z" clip-rule="evenodd"/></svg>
+                    </button>
+                </div>
+
+                <!-- Seek Group -->
+                <div class="control-group">
+                    <button class="btn-ctrl" id="rew-5m" title="Back 5m">5m</button>
+                    <button class="btn-ctrl" id="rew-60s" title="Back 60s">1m</button>
+                    <button class="btn-ctrl" id="rew-10s" title="Back 10s">10s</button>
+                    <button class="btn-ctrl" id="ff-10s" title="Forward 10s">10s</button>
+                    <button class="btn-ctrl" id="ff-60s" title="Forward 60s">1m</button>
+                    <button class="btn-ctrl" id="ff-5m" title="Forward 5m">5m</button>
+                </div>
+
+                <!-- Navigation Group -->
+                <div class="control-group">
+                    <button class="btn-ctrl" id="prev-hour" title="Previous Hour">H-</button>
+                    <button class="btn-ctrl" id="next-hour" title="Next Hour">H+</button>
+                    <label class="btn-label" style="margin-left: 8px;">
+                        <input type="checkbox" id="autoplay-toggle" checked> Auto
+                    </label>
+                </div>
+
+                <!-- Tools Group -->
+                <div class="control-group" style="margin-left: auto;">
+                    <button class="btn-ctrl" id="screenshot-btn" title="Take Screenshot">
+                        <svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M6 4a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm0 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M14.102 2.005A1 1 0 0 1 15 3v10a.962.962 0 0 1-.012.143l-.008.058a.993.993 0 0 1-.077.226l-.012.028-.03.05-.022.038-.023.032a.997.997 0 0 1-.1.121l-.02.022a.979.979 0 0 1-.075.064l-.04.03-.033.023a1.013 1.013 0 0 1-.057.034l-.021.013a.952.952 0 0 1-.052.025c-.012.006-.024.013-.037.018a.998.998 0 0 1-.07.025l-.015.005A.997.997 0 0 1 14 14H2a1 1 0 0 1-.128-.01l-.037-.005a1.007 1.007 0 0 1-.122-.028l-.02-.007a.98.98 0 0 1-.111-.043l-.018-.008a1.02 1.02 0 0 1-.116-.066l-.01-.006a1.002 1.002 0 0 1-.292-.306l-.01-.017a.992.992 0 0 1-.131-.402L1 13V3a1 1 0 0 1 1-1h12l.102.005Zm-6.395 9.288L9.414 13H14v-2l-3-3-3.293 3.293ZM2 13h6l-3-3-3 3Zm0-1.414 2.293-2.293a1 1 0 0 1 1.414 0L7 10.586l3.293-3.293a1 1 0 0 1 1.414 0L14 9.586V3H2v8.586Z" clip-rule="evenodd"/></svg>
+                    </button>
+                    <button class="btn-ctrl" id="fullscreen-btn" title="Toggle Fullscreen">
+                        <svg viewBox="0 0 16 16"><path d="M2 13h2v1H1v-3h1v2Zm13 1h-3v-1h2v-2h1v3Z"/><path fill-rule="evenodd" d="M12.102 4.005A1 1 0 0 1 13 5v6a1 1 0 0 1-.898.995L12 12H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h8l.102.005ZM4 11h8V5H4v6Z" clip-rule="evenodd"/><path d="M4 3H2v2H1V2h3v1Zm11 2h-1V3h-2V2h3v3Z"/></svg>
+                    </button>
+                </div>
+            </footer>
+        </main>
     </div>
-
     <script src="/static/app.js"></script>
-  </body>
+</body>
 </html>

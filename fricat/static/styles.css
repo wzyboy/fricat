@@ -1,279 +1,462 @@
+/* Aeon Surveillance - The Tactical Observer (v2.0) */
+
 :root {
-  color-scheme: light;
-  --bg: #f5f1ea;
-  --panel: #fffdf8;
-  --ink: #202020;
-  --muted: #6f6b63;
-  --accent: #2a5d9f;
-  --accent-strong: #1d3d6f;
-  --grid: #e0d9cd;
-  --shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
-  font-family: "Newsreader", "Iowan Old Style", "Palatino", "Times New Roman", serif;
+    /* Design Tokens */
+    --surface: #131313;
+    --surface-container-lowest: #0e0e0e;
+    --surface-container-low: #1c1b1b;
+    --surface-container-high: #2a2a2a;
+    --surface-container-highest: #353534;
+    --surface-bright: #3a3939;
+
+    --on-surface: #e5e2e1;
+    --on-surface-variant: #c3c6d7;
+    --outline-variant: #434655;
+
+    --primary: #b4c5ff;
+    --primary-container: #2563eb;
+    --on-primary: #002a78;
+
+    --motion-accent: #f97316;
+    --sound-accent: #38bdf8;
+
+    --font-ui: 'Inter', system-ui, sans-serif;
+    --font-data: 'Space Grotesk', monospace;
+
+    --radius-md: 4px;
+    --radius-lg: 8px;
+
+    /* Daylight Gradients */
+    --daylight-night: #0a0a14;
+    --daylight-dawn: #2d1b4d;
+    --daylight-day: #1a3a5f;
+    --daylight-noon: #ffd60a; /* Subtle accent for noon */
 }
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600&display=swap');
+
 * {
-  box-sizing: border-box;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
 }
 
 body {
-  margin: 0;
-  background: radial-gradient(circle at top, #fbf7ef 0%, #efe7da 55%, #e7ddcd 100%);
-  color: var(--ink);
-}
-
-.page {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 32px 24px 48px;
-  display: grid;
-  gap: 28px;
-}
-
-.header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 20px;
-  background: var(--panel);
-  padding: 24px;
-  border-radius: 18px;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--grid);
-}
-
-.title-block h1 {
-  margin: 0 0 6px;
-  font-size: 2.2rem;
-  letter-spacing: 0.5px;
-}
-
-.subtitle {
-  margin: 0;
-  color: var(--muted);
-}
-
-.controls {
-  display: flex;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.control {
-  display: grid;
-  gap: 6px;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.control select,
-.control input {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--grid);
-  background: #fff;
-  font-size: 1rem;
-}
-
-.calendar {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.content {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  gap: 24px;
-  align-items: stretch;
-}
-
-.day {
-  background: var(--panel);
-  border-radius: 14px;
-  border: 1px solid var(--grid);
-  padding: 10px;
-  min-height: 90px;
-  position: relative;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.day:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow);
-}
-
-.day.empty {
-  background: transparent;
-  border: none;
-  cursor: default;
-  box-shadow: none;
-}
-
-.day-header {
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-
-.day-count {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  font-size: 0.85rem;
-  background: var(--accent);
-  color: #fff;
-  padding: 4px 8px;
-  border-radius: 999px;
-}
-
-.day.active {
-  border-color: var(--accent);
-  box-shadow: 0 10px 25px rgba(42, 93, 159, 0.25);
-}
-
-.details {
-  background: var(--panel);
-  padding: 20px;
-  border-radius: 16px;
-  border: 1px solid var(--grid);
-  box-shadow: var(--shadow);
-  height: 100%;
-}
-
-.details-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.timezone {
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.recordings {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  max-height: 38vh;
-  overflow: auto;
-}
-
-.recording {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--grid);
-  background: #fff;
-  cursor: pointer;
-}
-
-.recording:hover {
-  border-color: var(--accent);
-}
-
-.recording-time {
-  font-weight: 600;
-}
-
-.recording-camera {
-  color: var(--muted);
-}
-
-.player {
-  background: var(--panel);
-  padding: 18px;
-  border-radius: 16px;
-  border: 1px solid var(--grid);
-  box-shadow: var(--shadow);
-  display: grid;
-  gap: 10px;
-  height: 100%;
-}
-
-.player video {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  border-radius: 12px;
-  background: #111;
-}
-
-.player.empty video,
-.player.empty .heatbar,
-.player.empty .player-controls,
-.player.empty .player-meta {
-  display: none;
-}
-
-.player-empty {
-  padding: 18px;
-  border: 1px dashed var(--grid);
-  border-radius: 12px;
-  color: var(--muted);
-  text-align: center;
-}
-
-.heatbar {
-  width: 100%;
-  height: 28px;
-  margin-top: 10px;
-  border-radius: 999px;
-  background: #e5ddcf;
-  display: block;
-}
-
-.player-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.player-controls button,
-.player-controls select {
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--grid);
-  background: #fff;
-  font-size: 0.95rem;
-}
-
-.player-controls button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.speed-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.player-meta {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-@media (max-width: 800px) {
-  .controls {
+    background-color: var(--surface);
+    color: var(--on-surface);
+    font-family: var(--font-ui);
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
     flex-direction: column;
-    align-items: stretch;
-  }
-
-  .recordings {
-    max-height: none;
-  }
-
-  .content {
-    grid-template-columns: 1fr;
-  }
-
-  .calendar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
+
+/* Layout */
+.app-container {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-rows: 64px 1fr;
+    height: 100vh;
+    width: 100vw;
+}
+
+/* Header */
+.top-bar {
+    grid-column: 1 / -1;
+    background-color: var(--surface-container-low);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 24px;
+    z-index: 100;
+}
+
+.site-info {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.site-title {
+    font-family: var(--font-data);
+    font-weight: 600;
+    font-size: 1.25rem;
+    text-transform: lowercase;
+    letter-spacing: -0.02em;
+}
+
+.site-location {
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    opacity: 0.7;
+}
+
+.camera-selector {
+    display: flex;
+    gap: 4px;
+    background: var(--surface-container-highest);
+    padding: 4px;
+    border-radius: var(--radius-md);
+}
+
+.camera-btn {
+    background: transparent;
+    border: none;
+    color: var(--on-surface-variant);
+    padding: 6px 12px;
+    font-family: var(--font-data);
+    font-weight: 500;
+    font-size: 0.875rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.camera-btn.active {
+    background: var(--primary-container);
+    color: white;
+}
+
+/* Sidebar */
+.sidebar {
+    grid-column: 1;
+    background-color: var(--surface-container-lowest);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    overflow: hidden;
+}
+
+.calendar-container {
+    padding: 16px;
+    border-bottom: 1px solid var(--surface-container-high);
+}
+
+.history-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+}
+
+.history-header {
+    padding: 16px;
+    font-family: var(--font-data);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--on-surface-variant);
+}
+
+.hour-item {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    gap: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    border-left: 2px solid transparent;
+}
+
+.hour-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.hour-item.active {
+    background: rgba(37, 99, 235, 0.1);
+    border-left-color: var(--primary-container);
+}
+
+.hour-label {
+    font-family: var(--font-data);
+    font-size: 0.875rem;
+    min-width: 48px;
+}
+
+.mini-activity-bar {
+    flex: 1;
+    height: 24px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 2px;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Main Canvas */
+.main-content {
+    grid-column: 2;
+    display: flex;
+    flex-direction: column;
+    background-color: var(--surface);
+    overflow: hidden;
+    padding: 24px;
+    gap: 24px;
+}
+
+.video-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+}
+
+.video-hud-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--font-data);
+}
+
+.timestamp-display {
+    background: var(--surface-container-high);
+    padding: 4px 12px;
+    border-radius: 100px;
+    font-size: 0.875rem;
+    color: var(--primary);
+}
+
+.copy-btn {
+    background: transparent;
+    border: 1px solid var(--outline-variant);
+    color: var(--on-surface-variant);
+    padding: 4px 8px;
+    font-size: 0.625rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+}
+
+.copy-btn:hover {
+    border-color: var(--on-surface-variant);
+}
+
+.video-container {
+    flex: 1;
+    background: black;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+video {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+}
+
+/* Activity Area */
+.activity-section {
+    height: 120px;
+    background: var(--surface-container-lowest);
+    border-radius: var(--radius-lg);
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+canvas.activity-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.seeker-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--primary);
+    pointer-events: none;
+    box-shadow: 0 0 10px var(--primary-container);
+}
+
+/* Controls */
+.controls-bar {
+    background: var(--surface-container-low);
+    padding: 16px 24px;
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.control-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-ctrl {
+    background: var(--surface-container-high);
+    border: none;
+    color: var(--on-surface);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-ctrl:hover {
+    background: var(--surface-bright);
+}
+
+.btn-ctrl svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+}
+
+.btn-ctrl.primary {
+    background: var(--primary-container);
+}
+
+.btn-label {
+    font-size: 0.625rem;
+    font-family: var(--font-data);
+    color: var(--on-surface-variant);
+    margin-top: 4px;
+}
+
+/* Specific Day/Night Colors for Sidebar Items */
+.daylight-night { background: linear-gradient(90deg, #05050d 0%, #0c0c16 100%); }
+.daylight-dawn  { background: linear-gradient(90deg, #1d1033 0%, #2c1b4d 100%); }
+.daylight-day   { background: linear-gradient(90deg, #0c1a2b 0%, #152c4a 100%); }
+.daylight-noon  { background: linear-gradient(90deg, #211f0a 0%, #363212 100%); }
+
+/* Custom Calendar Styling */
+.custom-calendar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--surface-container-low);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: var(--radius-md);
+    padding: 14px;
+}
+
+.calendar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.calendar-month-year {
+    font-family: var(--font-data);
+    font-size: 0.813rem;
+    font-weight: 600;
+    color: var(--on-surface);
+    letter-spacing: 0.02em;
+}
+
+.cal-nav-btn {
+    background: transparent;
+    border: none;
+    color: var(--on-surface-variant);
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+}
+
+.cal-nav-btn:hover {
+    background: var(--surface-container-high);
+    color: var(--primary);
+}
+
+.cal-nav-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+}
+
+.calendar-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+    font-family: var(--font-data);
+    font-size: 0.688rem;
+    color: var(--on-surface-variant);
+    opacity: 0.6;
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+}
+
+.cal-day-cell {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-data);
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.cal-day-cell:hover:not(.empty) {
+    background: var(--surface-container-high);
+    color: var(--on-surface);
+}
+
+.cal-day-cell.active {
+    background: var(--primary-container);
+    color: white;
+    font-weight: 600;
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 10px rgba(37, 99, 235, 0.3);
+}
+
+.cal-day-cell.empty {
+    cursor: default;
+    pointer-events: none;
+}
+
+.cal-day-cell.has-recordings {
+    position: relative;
+    color: var(--on-surface);
+    font-weight: 600;
+}
+
+.cal-day-cell.has-recordings::after {
+    content: '';
+    position: absolute;
+    bottom: 3px;
+    width: 4px;
+    height: 4px;
+    background-color: var(--primary);
+    border-radius: 50%;
+    box-shadow: 0 0 4px var(--primary);
+}
+
+.cal-day-cell.active.has-recordings::after {
+    background-color: white;
+    box-shadow: none;
+}
+

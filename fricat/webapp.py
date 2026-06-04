@@ -1,4 +1,5 @@
 from __future__ import annotations
+print("DEBUG LOADED WEBAPP:", __file__)
 
 import os
 import json
@@ -68,14 +69,71 @@ def scan_recordings(root: Path) -> list[Recording]:
     return recordings
 
 
-def serialize_recording(rec: Recording) -> dict[str, str | bool]:
+def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | None:
+    if not meta_path or not meta_path.is_file():
+        return None
+    try:
+        with open(meta_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        segments = data.get('segments', [])
+        if not segments:
+            return None
+            
+        # Downsample 3600 seconds into 24 bins (150 seconds per bin)
+        bins_count = 24
+        bin_size = 150.0
+        motion_bins = [0.0] * bins_count
+        sound_bins = [-80.0] * bins_count
+        motion_counts = [0] * bins_count
+        sound_counts = [0] * bins_count
+        
+        for seg in segments:
+            offset = seg.get('offset', 0.0)
+            bin_idx = min(int(offset / bin_size), bins_count - 1)
+            
+            motion = seg.get('motion', 0.0)
+            audio = seg.get('audio_dbfs', -80.0)
+            
+            motion_bins[bin_idx] += motion
+            motion_counts[bin_idx] += 1
+            
+            if audio > -80.0:
+                sound_bins[bin_idx] += audio
+                sound_counts[bin_idx] += 1
+                
+        # Calculate averages
+        for i in range(bins_count):
+            if motion_counts[i] > 0:
+                motion_bins[i] = motion_bins[i] / motion_counts[i]
+            if sound_counts[i] > 0:
+                sound_bins[i] = sound_bins[i] / sound_counts[i]
+            else:
+                sound_bins[i] = -80.0
+                
+        # Normalize sound to 0-100 range for easy drawing
+        sound_normalized = [
+            max(0.0, (val + 80.0) / 80.0) * 100.0 for val in sound_bins
+        ]
+        
+        return {
+            'motion': [round(v, 1) for v in motion_bins],
+            'sound': [round(v, 1) for v in sound_normalized]
+        }
+    except Exception:
+        return None
+
+
+def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list[float]] | None]:
     rel = rec.path.relative_to(get_archive_root()).as_posix()
+    profile = get_activity_profile(rec.meta_path)
     return {
         'camera': rec.camera,
         'start_utc': rec.start_utc.replace(tzinfo=UTC).isoformat(),
         'path': rel,
         'has_meta': rec.meta_path is not None,
+        'profile': profile
     }
+
 
 
 app = FastAPI(title='fricat archive')
@@ -96,6 +154,19 @@ async def cameras() -> JSONResponse:
     recordings = scan_recordings(root)
     cameras = sorted({rec.camera for rec in recordings})
     return JSONResponse(content=cameras)
+
+
+@app.get('/api/recorded_dates')
+async def recorded_dates(camera: str | None = None) -> JSONResponse:
+    root = get_archive_root()
+    recordings = scan_recordings(root)
+    dates = set()
+    for rec in recordings:
+        if camera and rec.camera != camera:
+            continue
+        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(LEGACY_FILENAME_TZ)
+        dates.add(local_dt.strftime('%Y-%m-%d'))
+    return JSONResponse(content=sorted(list(dates)))
 
 
 @app.get('/api/recordings')

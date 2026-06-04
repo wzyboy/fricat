@@ -14,5 +14,5 @@ def main(root_path: Path, host: str, port: int, reload: bool) -> None:
     """Serve the archive browser web UI."""
     os.environ['FRICAT_ARCHIVE_ROOT'] = str(root_path.resolve())
     static_dir = Path(__file__).parent / 'static'
-    reload_dirs = [str(static_dir)] if reload else None
+    reload_dirs = [str(Path(__file__).parent)] if reload else None
     uvicorn.run('fricat.webapp:app', host=host, port=port, reload=reload, reload_dirs=reload_dirs)
