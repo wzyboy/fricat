@@ -15,7 +15,7 @@ class FricatApp {
 
         // Custom calendar state
         this.recordedDates = [];
-        this.calendarDate = new Date(this.state.currentDate);
+        this.calendarDate = this.parseDateString(this.state.currentDate);
 
         this.elements = {
             video: document.getElementById('main-video'),
@@ -50,7 +50,7 @@ class FricatApp {
     bindEvents() {
         this.elements.datePicker.addEventListener('change', (e) => {
             this.state.currentDate = e.target.value;
-            this.calendarDate = new Date(this.state.currentDate);
+            this.calendarDate = this.parseDateString(this.state.currentDate);
             this.loadDay();
             this.renderCalendar();
         });
@@ -160,11 +160,16 @@ class FricatApp {
         return `${parts.year}-${parts.month}-${parts.day}`;
     }
 
+    parseDateString(dateStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return new Date(year, month - 1, day);
+    }
+
     initializeCurrentDate() {
         const latestRecordedDate = this.recordedDates.at(-1);
         this.state.currentDate = latestRecordedDate || this.getTodayDateString();
         this.elements.datePicker.value = this.state.currentDate;
-        this.calendarDate = new Date(this.state.currentDate);
+        this.calendarDate = this.parseDateString(this.state.currentDate);
     }
 
     async loadRecordedDates() {
@@ -310,8 +315,7 @@ class FricatApp {
 
     renderHourList() {
         this.elements.hourList.innerHTML = '';
-        const parts = this.state.currentDate.split('-');
-        const dateObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        const dateObj = this.parseDateString(this.state.currentDate);
         this.elements.currentDateLabel.textContent = dateObj.toLocaleDateString('en-US', { 
             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
         });
