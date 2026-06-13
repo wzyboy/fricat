@@ -1,3 +1,4 @@
+import os
 import json
 import hashlib
 import logging
@@ -193,6 +194,50 @@ def test_recordings_include_activity_profiles(monkeypatch, archive_root: Path) -
     assert all(rec['profile'] is not None for rec in data)
     assert all(len(rec['profile']['motion']) == 24 for rec in data)
     assert all(len(rec['profile']['sound']) == 24 for rec in data)
+
+
+def test_recordings_refresh_when_hour_is_added(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
+
+    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
+
+    day_dir = archive_root / '2026-03-24'
+    old_mtime_ns = day_dir.stat().st_mtime_ns
+    (day_dir / '21_CAM1.mkv').write_bytes(b'test-media')
+    os.utime(day_dir, ns=(old_mtime_ns + 1_000_000_000, old_mtime_ns + 1_000_000_000))
+
+    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/21_CAM1.mkv',
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
+
+
+def test_recorded_dates_refresh_recent_new_day(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
+    assert response.json() == ['2026-03-24']
+
+    day_dir = archive_root / '2026-03-25'
+    day_dir.mkdir()
+    (day_dir / '12_CAM1.mkv').write_bytes(b'test-media')
+    webapp.clear_scan_cache()
+
+    response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
+
+    assert response.json() == ['2026-03-24', '2026-03-25']
 
 
 def test_meta_accepts_encoded_path(monkeypatch, archive_root: Path) -> None:

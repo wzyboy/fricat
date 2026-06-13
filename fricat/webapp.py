@@ -3,6 +3,7 @@ import json
 import sqlite3
 import hashlib
 import logging
+from time import time
 from time import monotonic
 from pathlib import Path
 from datetime import UTC
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
+RECENT_ARCHIVE_DAYS = 2
 
 
 @dataclass(frozen=True)
@@ -87,9 +89,42 @@ def _recording_from_index_row(root: Path, row: sqlite3.Row) -> Recording:
     )
 
 
-def scan_recordings(root: Path) -> list[Recording]:
+def _archive_date_str(path: Path) -> str | None:
+    try:
+        datetime.fromisoformat(f'{path.name} 00:00:00')
+    except ValueError:
+        return None
+    return path.name
+
+
+def _iter_archive_day_dirs(root: Path) -> list[Path]:
+    if _archive_date_str(root):
+        return [root]
+
+    try:
+        children = list(root.iterdir())
+    except OSError as err:
+        logger.warning('Failed to list archive root %s: %s', root, err)
+        return []
+
+    return sorted(child for child in children if child.is_dir() and _archive_date_str(child))
+
+
+def _day_dir_for_date(root: Path, date_str: str) -> Path:
+    if _archive_date_str(root) == date_str:
+        return root
+    return root / date_str
+
+
+def scan_day_recordings(root: Path, day_dir: Path) -> list[Recording]:
     recordings: list[Recording] = []
-    for path in root.rglob('*.mkv'):
+    try:
+        paths = sorted(day_dir.glob('*.mkv'))
+    except OSError as err:
+        logger.warning('Failed to list archive day %s: %s', day_dir, err)
+        return recordings
+
+    for path in paths:
         parsed = parse_recording_path(root, path)
         if not parsed:
             continue
@@ -107,6 +142,13 @@ def scan_recordings(root: Path) -> list[Recording]:
                 meta_path=meta_path if meta_path.exists() else None,
             )
         )
+    return recordings
+
+
+def scan_recordings(root: Path) -> list[Recording]:
+    recordings: list[Recording] = []
+    for day_dir in _iter_archive_day_dirs(root):
+        recordings.extend(scan_day_recordings(root, day_dir))
     recordings.sort(key=lambda rec: (rec.start_utc, rec.camera))
     return recordings
 
@@ -131,6 +173,13 @@ def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
 
         create index recordings_start_idx on recordings(start_ts);
         create index recordings_camera_idx on recordings(camera);
+
+        create table scanned_dirs (
+            date_str text primary key,
+            rel_path text not null,
+            dir_mtime_ns integer not null,
+            scanned_at real not null
+        );
 
         pragma user_version = {INDEX_SCHEMA_VERSION};
         '''
@@ -215,10 +264,19 @@ def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple
     return rows
 
 
-def _replace_recording_index(conn: sqlite3.Connection, root: Path, recordings: list[Recording]) -> None:
+def _replace_recording_day(
+    conn: sqlite3.Connection,
+    root: Path,
+    date_str: str,
+    day_dir: Path,
+    recordings: list[Recording],
+    dir_mtime_ns: int,
+    scanned_at: float,
+) -> None:
     rows = _recording_index_rows(root, recordings)
+    rel_path = '.' if day_dir == root else day_dir.relative_to(root).as_posix()
     with conn:
-        conn.execute('delete from recordings')
+        conn.execute('delete from recordings where date_str = ?', (date_str,))
         conn.executemany(
             '''
             insert into recordings (
@@ -227,6 +285,101 @@ def _replace_recording_index(conn: sqlite3.Connection, root: Path, recordings: l
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             rows,
+        )
+        conn.execute(
+            '''
+            insert into scanned_dirs (date_str, rel_path, dir_mtime_ns, scanned_at)
+            values (?, ?, ?, ?)
+            on conflict(date_str) do update set
+                rel_path = excluded.rel_path,
+                dir_mtime_ns = excluded.dir_mtime_ns,
+                scanned_at = excluded.scanned_at
+            ''',
+            (date_str, rel_path, dir_mtime_ns, scanned_at),
+        )
+
+
+def _remove_recording_day(conn: sqlite3.Connection, date_str: str) -> None:
+    with conn:
+        conn.execute('delete from recordings where date_str = ?', (date_str,))
+        conn.execute('delete from scanned_dirs where date_str = ?', (date_str,))
+
+
+def _index_has_scanned_dirs(conn: sqlite3.Connection) -> bool:
+    count = conn.execute('select count(*) from scanned_dirs').fetchone()[0]
+    return count > 0
+
+
+def _all_archive_date_strs(root: Path) -> list[str]:
+    return [day_dir.name for day_dir in _iter_archive_day_dirs(root)]
+
+
+def _recent_archive_date_strs(root: Path) -> list[str]:
+    return _all_archive_date_strs(root)[-RECENT_ARCHIVE_DAYS:]
+
+
+def _range_archive_date_strs(start_dt: datetime, end_dt: datetime) -> list[str]:
+    first_date = (start_dt - timedelta(days=1)).date()
+    last_date = (end_dt + timedelta(days=1)).date()
+    dates = []
+    current = first_date
+    while current <= last_date:
+        dates.append(current.isoformat())
+        current += timedelta(days=1)
+    return dates
+
+
+def _should_refresh_day(
+    conn: sqlite3.Connection,
+    date_str: str,
+    dir_mtime_ns: int,
+    now: float,
+    ttl: float,
+    force: bool,
+) -> bool:
+    if force:
+        return True
+    row = conn.execute(
+        'select dir_mtime_ns, scanned_at from scanned_dirs where date_str = ?',
+        (date_str,),
+    ).fetchone()
+    if row is None:
+        return True
+    if row['dir_mtime_ns'] != dir_mtime_ns:
+        return True
+    return now - row['scanned_at'] >= ttl
+
+
+def _refresh_index_days(
+    conn: sqlite3.Connection,
+    root: Path,
+    date_strs: list[str],
+    *,
+    force: bool = False,
+) -> None:
+    ttl = get_scan_cache_ttl()
+    now = time()
+    for date_str in sorted(set(date_strs)):
+        day_dir = _day_dir_for_date(root, date_str)
+        try:
+            dir_stat = day_dir.stat()
+        except OSError:
+            _remove_recording_day(conn, date_str)
+            continue
+        if not day_dir.is_dir():
+            _remove_recording_day(conn, date_str)
+            continue
+        if not _should_refresh_day(conn, date_str, dir_stat.st_mtime_ns, now, ttl, force):
+            continue
+        recordings = scan_day_recordings(root, day_dir)
+        _replace_recording_day(
+            conn,
+            root,
+            date_str,
+            day_dir,
+            recordings,
+            dir_stat.st_mtime_ns,
+            now,
         )
 
 
@@ -241,20 +394,74 @@ def _load_indexed_recordings(conn: sqlite3.Connection, root: Path) -> list[Recor
     return [_recording_from_index_row(root, row) for row in rows]
 
 
+def _load_indexed_recordings_for_range(
+    conn: sqlite3.Connection,
+    root: Path,
+    start_dt: datetime,
+    end_dt: datetime,
+    camera: str | None,
+) -> list[Recording]:
+    params: list[object] = [(start_dt - timedelta(hours=1)).timestamp(), end_dt.timestamp()]
+    camera_filter = ''
+    if camera:
+        camera_filter = 'and camera = ?'
+        params.append(camera)
+    rows = conn.execute(
+        f'''
+        select rel_path, camera, start_ts, meta_rel_path
+        from recordings
+        where start_ts > ? and start_ts < ?
+        {camera_filter}
+        order by start_ts, camera
+        ''',
+        params,
+    ).fetchall()
+    recordings = [_recording_from_index_row(root, row) for row in rows]
+    return [
+        rec
+        for rec in recordings
+        if rec.start_utc + timedelta(hours=1) > start_dt and rec.start_utc < end_dt
+    ]
+
+
 def load_recordings(root: Path) -> list[Recording]:
     conn = _connect_recording_index(root)
     if conn is None:
         return scan_recordings(root)
 
     try:
-        with conn:
-            recordings = _load_indexed_recordings(conn, root)
-            if recordings:
-                return recordings
+        if _index_has_scanned_dirs(conn):
+            _refresh_index_days(conn, root, _recent_archive_date_strs(root))
+        else:
+            date_strs = _all_archive_date_strs(root)
+            if not date_strs:
+                return scan_recordings(root)
+            _refresh_index_days(conn, root, date_strs, force=True)
+        recordings = _load_indexed_recordings(conn, root)
+        return recordings
+    finally:
+        conn.close()
 
-            recordings = scan_recordings(root)
-            _replace_recording_index(conn, root, recordings)
-            return recordings
+
+def load_recordings_for_range(
+    root: Path,
+    start_dt: datetime,
+    end_dt: datetime,
+    camera: str | None,
+) -> list[Recording]:
+    conn = _connect_recording_index(root)
+    if conn is None:
+        return [
+            rec
+            for rec in scan_recordings(root)
+            if (not camera or rec.camera == camera)
+            and rec.start_utc + timedelta(hours=1) > start_dt
+            and rec.start_utc < end_dt
+        ]
+
+    try:
+        _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt))
+        return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
     finally:
         conn.close()
 
@@ -410,17 +617,12 @@ async def recordings(start: float, end: float, camera: str | None = None) -> JSO
     if start >= end:
         raise HTTPException(status_code=400, detail='start must be less than end')
     root = get_archive_root()
-    recordings = get_cached_recordings(root)
     start_dt = datetime.fromtimestamp(start, tz=UTC)
     end_dt = datetime.fromtimestamp(end, tz=UTC)
+    recordings = load_recordings_for_range(root, start_dt, end_dt, camera)
 
-    filtered: list[dict[str, str | bool]] = []
+    filtered: list[dict[str, str | bool | dict[str, list[float]] | None]] = []
     for rec in recordings:
-        if camera and rec.camera != camera:
-            continue
-        rec_end = rec.start_utc + timedelta(hours=1)
-        if rec_end <= start_dt or rec.start_utc >= end_dt:
-            continue
         filtered.append(serialize_recording(rec))
 
     return JSONResponse(content=filtered)
