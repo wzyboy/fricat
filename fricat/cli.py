@@ -1,8 +1,9 @@
 import click
-from fricat import backfill
-from fricat import concat
-from fricat import prune
+
 from fricat import web
+from fricat import prune
+from fricat import concat
+from fricat import backfill
 
 
 @click.group()

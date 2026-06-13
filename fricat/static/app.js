@@ -4,9 +4,11 @@
 
 class FricatApp {
     constructor() {
+        const defaultTimezone = 'America/Vancouver';
         this.state = {
-            currentDate: document.getElementById('date-picker')?.value || new Date().toISOString().split('T')[0],
-            currentCamera: 'CAM1',
+            timezone: defaultTimezone,
+            currentDate: document.getElementById('date-picker')?.value || this.getTodayDateString(defaultTimezone),
+            currentCamera: null,
             currentHour: null,
             recordings: [],
             isPlaying: false,
@@ -15,11 +17,12 @@ class FricatApp {
 
         // Custom calendar state
         this.recordedDates = [];
-        this.calendarDate = new Date(this.state.currentDate);
+        this.calendarDate = this.parseDateString(this.state.currentDate);
 
         this.elements = {
             video: document.getElementById('main-video'),
             datePicker: document.getElementById('date-picker'),
+            timezoneLabel: document.getElementById('timezone-label'),
             currentDateLabel: document.getElementById('current-date-label'),
             hourList: document.getElementById('hour-list'),
             videoTimestamp: document.getElementById('video-timestamp'),
@@ -29,16 +32,23 @@ class FricatApp {
             soundCanvas: document.getElementById('sound-canvas'),
             seekerLine: document.getElementById('seeker-line'),
             autoplayToggle: document.getElementById('autoplay-toggle'),
-            cameraBtns: document.querySelectorAll('.camera-btn')
+            cameraSelector: document.querySelector('.camera-selector'),
+            cameraBtns: []
         };
+        this.recordedDatesRequestSeq = 0;
+        this.dayRequestSeq = 0;
+        this.activityRequestSeq = 0;
 
         this.init();
     }
 
     async init() {
+        await this.loadConfig();
+        await this.loadCameras();
         this.bindEvents();
         this.initCalendar();
         await this.loadRecordedDates();
+        this.initializeCurrentDate();
         await this.loadDay();
         this.renderCalendar();
         this.updateUI();
@@ -47,7 +57,7 @@ class FricatApp {
     bindEvents() {
         this.elements.datePicker.addEventListener('change', (e) => {
             this.state.currentDate = e.target.value;
-            this.calendarDate = new Date(this.state.currentDate);
+            this.calendarDate = this.parseDateString(this.state.currentDate);
             this.loadDay();
             this.renderCalendar();
         });
@@ -101,9 +111,62 @@ class FricatApp {
         };
     }
 
-    getLocalParts(date) {
+    async loadConfig() {
+        try {
+            const res = await fetch('/api/config');
+            if (res.ok) {
+                const data = await res.json();
+                if (typeof data.timezone === 'string' && data.timezone) {
+                    this.state.timezone = data.timezone;
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load config', err);
+        }
+        this.updateTimezoneLabel();
+    }
+
+    updateTimezoneLabel() {
+        if (this.elements.timezoneLabel) {
+            this.elements.timezoneLabel.textContent = this.state.timezone;
+        }
+    }
+
+    async loadCameras() {
+        if (!this.elements.cameraSelector) return;
+
+        try {
+            const res = await fetch('/api/cameras');
+            const cameras = res.ok ? await res.json() : [];
+            this.elements.cameraSelector.innerHTML = '';
+            this.elements.cameraBtns = [];
+            this.state.currentCamera = null;
+
+            if (!Array.isArray(cameras)) return;
+
+            cameras.forEach((camera, index) => {
+                const btn = document.createElement('button');
+                btn.className = `camera-btn${index === 0 ? ' active' : ''}`;
+                btn.dataset.camera = camera;
+                btn.textContent = camera;
+                this.elements.cameraSelector.appendChild(btn);
+                this.elements.cameraBtns.push(btn);
+            });
+
+            if (cameras.length > 0) {
+                this.state.currentCamera = cameras[0];
+            }
+        } catch (err) {
+            console.error('Failed to load cameras', err);
+            this.elements.cameraSelector.innerHTML = '';
+            this.elements.cameraBtns = [];
+            this.state.currentCamera = null;
+        }
+    }
+
+    getLocalParts(date, timeZone = this.state.timezone) {
         const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/Vancouver',
+            timeZone,
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -120,16 +183,47 @@ class FricatApp {
         return p;
     }
 
+    getTodayDateString(timeZone = this.state.timezone) {
+        const parts = this.getLocalParts(new Date(), timeZone);
+        return `${parts.year}-${parts.month}-${parts.day}`;
+    }
+
+    encodeMediaPath(path) {
+        return path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    }
+
+    parseDateString(dateStr) {
+        const [year, month, day] = dateStr.split('-').map(Number);
+        return new Date(year, month - 1, day);
+    }
+
+    initializeCurrentDate() {
+        const latestRecordedDate = this.recordedDates.at(-1);
+        this.state.currentDate = latestRecordedDate || this.getTodayDateString();
+        this.elements.datePicker.value = this.state.currentDate;
+        this.calendarDate = this.parseDateString(this.state.currentDate);
+    }
+
     async loadRecordedDates() {
+        const requestSeq = ++this.recordedDatesRequestSeq;
+        if (!this.state.currentCamera) {
+            this.recordedDates = [];
+            return;
+        }
+
         try {
-            const res = await fetch(`/api/recorded_dates?camera=${this.state.currentCamera}`);
+            const params = new URLSearchParams({ camera: this.state.currentCamera });
+            const res = await fetch(`/api/recorded_dates?${params}`);
+            if (requestSeq !== this.recordedDatesRequestSeq) return;
             if (res.ok) {
                 const data = await res.json();
+                if (requestSeq !== this.recordedDatesRequestSeq) return;
                 this.recordedDates = Array.isArray(data) ? data : [];
             } else {
                 this.recordedDates = [];
             }
         } catch (err) {
+            if (requestSeq !== this.recordedDatesRequestSeq) return;
             console.error('Failed to load recorded dates', err);
             this.recordedDates = [];
         }
@@ -219,6 +313,14 @@ class FricatApp {
     }
 
     async loadDay() {
+        const requestSeq = ++this.dayRequestSeq;
+        if (!this.state.currentCamera) {
+            this.state.recordings = [];
+            this.renderHourList();
+            this.clearVideo();
+            return;
+        }
+
         const parts = this.state.currentDate.split('-');
         const start = Date.UTC(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2])) / 1000;
         // Fetch 12 hours before and 12 hours after the UTC day range to ensure we capture all files corresponding to this local day
@@ -226,10 +328,16 @@ class FricatApp {
         const queryEnd = start + 86400 + 43200;
         
         try {
-            const res = await fetch(`/api/recordings?start=${queryStart}&end=${queryEnd}&camera=${this.state.currentCamera}`);
+            const params = new URLSearchParams({
+                start: queryStart.toString(),
+                end: queryEnd.toString(),
+                camera: this.state.currentCamera,
+            });
+            const res = await fetch(`/api/recordings?${params}`);
             const allRecordings = await res.json();
+            if (requestSeq !== this.dayRequestSeq) return;
             
-            // Filter recordings whose start time in local Vancouver time is on the current date
+            // Filter recordings whose start time in the archive timezone is on the current date
             this.state.recordings = allRecordings.filter(r => {
                 const lp = this.getLocalParts(r.start_utc);
                 const localDateStr = `${lp.year}-${lp.month}-${lp.day}`;
@@ -245,14 +353,14 @@ class FricatApp {
                 this.clearVideo();
             }
         } catch (err) {
+            if (requestSeq !== this.dayRequestSeq) return;
             console.error('Failed to load recordings', err);
         }
     }
 
     renderHourList() {
         this.elements.hourList.innerHTML = '';
-        const parts = this.state.currentDate.split('-');
-        const dateObj = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        const dateObj = this.parseDateString(this.state.currentDate);
         this.elements.currentDateLabel.textContent = dateObj.toLocaleDateString('en-US', { 
             weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
         });
@@ -317,26 +425,42 @@ class FricatApp {
 
     async loadRecording(recording) {
         this.state.currentHour = recording;
-        this.elements.video.src = `/media/${recording.path}`;
-        this.elements.video.play();
-        this.state.isPlaying = true;
+        this.elements.video.src = `/media/${this.encodeMediaPath(recording.path)}`;
+        this.state.isPlaying = false;
         this.updateUI();
         this.renderHourList();
+        this.playVideo();
 
         // Load Activity Meta
         if (recording.has_meta) {
             this.loadActivity(recording.path);
         } else {
+            this.activityRequestSeq += 1;
             this.clearActivity();
         }
     }
 
-    async loadActivity(path) {
+    async playVideo() {
         try {
-            const res = await fetch(`/api/meta?path=${path}`);
+            await this.elements.video.play();
+            this.state.isPlaying = true;
+        } catch (err) {
+            console.warn('Playback failed', err);
+            this.state.isPlaying = false;
+        }
+        this.updateUI();
+    }
+
+    async loadActivity(path) {
+        const requestSeq = ++this.activityRequestSeq;
+        try {
+            const params = new URLSearchParams({ path });
+            const res = await fetch(`/api/meta?${params}`);
             const data = await res.json();
+            if (requestSeq !== this.activityRequestSeq) return;
             this.drawActivity(data);
         } catch (e) {
+            if (requestSeq !== this.activityRequestSeq) return;
             console.error('Meta load failed', e);
         }
     }
@@ -424,16 +548,15 @@ class FricatApp {
         }
     }
 
-    togglePlay() {
+    async togglePlay() {
         const v = this.elements.video;
         if (v.paused) {
-            v.play();
-            this.state.isPlaying = true;
+            await this.playVideo();
         } else {
             v.pause();
             this.state.isPlaying = false;
+            this.updateUI();
         }
-        this.updateUI();
     }
 
     seek(seconds) {
@@ -479,6 +602,9 @@ class FricatApp {
     clearVideo() {
         this.elements.video.src = '';
         this.elements.videoTimestamp.textContent = '--:--:--';
+        this.state.isPlaying = false;
+        this.activityRequestSeq += 1;
+        this.updateUI();
         this.clearActivity();
     }
 

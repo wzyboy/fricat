@@ -2,17 +2,15 @@
 
 from __future__ import annotations
 
-import argparse
 import re
+import argparse
 from pathlib import Path
 
 _AUDIO_DBFS_RE = re.compile(r'"audio_dbfs"\s*:')
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description='Delete JSON files that do not contain the "audio_dbfs" field.'
-    )
+    parser = argparse.ArgumentParser(description='Delete JSON files that do not contain the "audio_dbfs" field.')
     parser.add_argument(
         'root',
         type=Path,

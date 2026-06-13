@@ -2,7 +2,9 @@ from pathlib import Path
 from collections.abc import Mapping
 
 import click
-from prometheus_client import CollectorRegistry, Gauge, write_to_textfile
+from prometheus_client import Gauge
+from prometheus_client import CollectorRegistry
+from prometheus_client import write_to_textfile
 
 
 def write_metrics_file(

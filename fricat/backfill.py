@@ -1,15 +1,15 @@
 import os
+from pathlib import Path
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
-from datetime import datetime
-from pathlib import Path
 
 import click
 from tqdm import tqdm
 
-from fricat.sidecar import generate_sidecar
-from fricat.sidecar import write_sidecar
 from fricat.utils import parse_recording_path
+from fricat.sidecar import write_sidecar
+from fricat.sidecar import generate_sidecar
 
 
 def _default_jobs() -> int:
@@ -88,8 +88,7 @@ def main(
     written = 0
     with ThreadPoolExecutor(max_workers=jobs) as executor:
         futures = [
-            executor.submit(_backfill_recording, archive_root, db_path, recording)
-            for recording in eligible_recordings
+            executor.submit(_backfill_recording, archive_root, db_path, recording) for recording in eligible_recordings
         ]
         for future in tqdm(as_completed(futures), total=len(futures)):
             status, sidecar_path, sidecar = future.result()

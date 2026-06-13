@@ -1,11 +1,10 @@
 import json
 import sqlite3
 import subprocess
-from dataclasses import dataclass
+from pathlib import Path
 from datetime import UTC
 from datetime import datetime
-from pathlib import Path
-
+from dataclasses import dataclass
 
 ANALYSIS_WINDOW_SECONDS = 1
 ANALYSIS_SAMPLE_RATE = 8000

@@ -16,12 +16,13 @@ rule it is ignored by the later ones.
 import re
 import shutil
 import datetime
-from pathlib import Path
-from collections import OrderedDict
 from time import time
 from time import perf_counter
+from pathlib import Path
+from collections import OrderedDict
 
 import click
+
 from fricat.utils import dir_size
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file

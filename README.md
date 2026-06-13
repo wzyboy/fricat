@@ -6,6 +6,7 @@ Small CLI utilities for managing Frigate-style recordings and dated backup direc
 
 - `concat`: concatenate per-hour/per-camera MP4 segments into a single MKV per hour.
 - `prune`: apply a GFS (daily/weekly/monthly/yearly) retention policy to `YYYY-MM-DD` directories.
+- `web`: serve a local browser UI for reviewing archived recordings by camera, date, and hour.
 
 ## Requirements
 
@@ -76,6 +77,14 @@ Notes:
 - Rules are applied in order: daily, weekly, monthly, yearly.
 - Writes Prometheus metrics to `/var/lib/node_exporter/fricat_prune.prom` by default.
 
+### web
+
+Serve the archive browser at `http://127.0.0.1:8000`:
+
+```bash
+fricat web --root /media/frigate/archive
+```
+
 ## Metrics
 
 Both commands write Prometheus textfile metrics via `prometheus-client`:
@@ -84,11 +93,3 @@ Both commands write Prometheus textfile metrics via `prometheus-client`:
 - `prune`: input/kept/removed counts, removed bytes, duration, last run timestamp
 
 Override the output path with `--metrics-file` on each command.
-
-## Development
-
-Run the CLI from the repo:
-
-```bash
-python -m fricat --help
-```
