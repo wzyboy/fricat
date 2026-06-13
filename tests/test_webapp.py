@@ -1,4 +1,5 @@
 import json
+import logging
 from collections.abc import Generator
 from datetime import UTC
 from datetime import datetime
@@ -158,6 +159,39 @@ def test_sound_profile_averaging_starts_at_zero(tmp_path) -> None:
 
     assert profile is not None
     assert profile['sound'][0] == 50.0
+
+
+def test_activity_profile_logs_invalid_json(tmp_path, caplog) -> None:
+    sidecar = tmp_path / 'invalid.json'
+    sidecar.write_text('{', encoding='utf-8')
+
+    with caplog.at_level(logging.WARNING, logger='fricat.webapp'):
+        profile = webapp.get_activity_profile(sidecar)
+
+    assert profile is None
+    assert 'Failed to read sidecar profile' in caplog.text
+
+
+def test_recordings_keep_malformed_profiles_from_crashing(monkeypatch, tmp_path, caplog) -> None:
+    day_dir = tmp_path / '2026-03-24'
+    day_dir.mkdir()
+    (day_dir / '00_CAM1.mkv').write_bytes(b'')
+    (day_dir / '00_CAM1.json').write_text(
+        json.dumps({'segments': [{'offset': 'not-a-number', 'motion': 1.0}]}),
+        encoding='utf-8',
+    )
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
+    client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
+
+    with caplog.at_level(logging.WARNING, logger='fricat.webapp'):
+        response = client.get('/api/recordings', params={'start': start, 'end': end})
+
+    assert response.status_code == 200
+    assert response.json()[0]['has_meta'] is True
+    assert response.json()[0]['profile'] is None
+    assert 'Invalid sidecar profile' in caplog.text
 
 
 def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:

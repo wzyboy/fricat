@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -15,6 +16,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fricat.utils import parse_recording_path
 
+
+logger = logging.getLogger(__name__)
 
 # Legacy files were using local time in filenames, while newer files are using
 # UTC time in filenames.
@@ -108,13 +111,30 @@ def get_cached_recordings(root: Path) -> list[Recording]:
     return recordings
 
 
+def _coerce_float(value: object, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f'{field_name} must be numeric')
+    try:
+        return float(value)
+    except (TypeError, ValueError) as err:
+        raise ValueError(f'{field_name} must be numeric') from err
+
+
 def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | None:
     if not meta_path or not meta_path.is_file():
         return None
     try:
-        with open(meta_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        data = json.loads(meta_path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as err:
+        logger.warning('Failed to read sidecar profile from %s: %s', meta_path, err)
+        return None
+
+    try:
+        if not isinstance(data, dict):
+            raise ValueError('sidecar root must be an object')
         segments = data.get('segments', [])
+        if not isinstance(segments, list):
+            raise ValueError('segments must be a list')
         if not segments:
             return None
             
@@ -127,13 +147,17 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
         sound_counts = [0] * bins_count
         
         for seg in segments:
-            offset = seg.get('offset', 0.0)
+            if not isinstance(seg, dict):
+                raise ValueError('segment must be an object')
+            offset = _coerce_float(seg.get('offset', 0.0), 'offset')
             bin_idx = min(int(offset / bin_size), bins_count - 1)
             
-            motion = seg.get('motion', 0.0)
+            motion = _coerce_float(seg.get('motion', 0.0), 'motion')
             audio = seg.get('audio_dbfs')
             if audio is None:
                 audio = -80.0
+            else:
+                audio = _coerce_float(audio, 'audio_dbfs')
             
             motion_bins[bin_idx] += motion
             motion_counts[bin_idx] += 1
@@ -160,7 +184,8 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
             'motion': [round(v, 1) for v in motion_bins],
             'sound': [round(v, 1) for v in sound_normalized]
         }
-    except Exception:
+    except ValueError as err:
+        logger.warning('Invalid sidecar profile in %s: %s', meta_path, err)
         return None
 
 
