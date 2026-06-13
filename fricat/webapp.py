@@ -92,7 +92,9 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
             bin_idx = min(int(offset / bin_size), bins_count - 1)
             
             motion = seg.get('motion', 0.0)
-            audio = seg.get('audio_dbfs', -80.0)
+            audio = seg.get('audio_dbfs')
+            if audio is None:
+                audio = -80.0
             
             motion_bins[bin_idx] += motion
             motion_counts[bin_idx] += 1
