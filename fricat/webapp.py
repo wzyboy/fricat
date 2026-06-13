@@ -83,7 +83,7 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
         bins_count = 24
         bin_size = 150.0
         motion_bins = [0.0] * bins_count
-        sound_bins = [-80.0] * bins_count
+        sound_bins = [0.0] * bins_count
         motion_counts = [0] * bins_count
         sound_counts = [0] * bins_count
         
