@@ -1,6 +1,5 @@
 import os
 import json
-import hashlib
 import logging
 from pathlib import Path
 from datetime import UTC
@@ -14,10 +13,10 @@ from fricat import webapp
 
 
 @pytest.fixture(autouse=True)
-def isolate_web_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def isolate_web_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
+    monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
     monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
-    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(tmp_path / 'web-index.sqlite'))
 
 
 @pytest.fixture
@@ -102,55 +101,6 @@ def test_config_returns_timezone_override(monkeypatch) -> None:
     assert response.json() == {'timezone': 'UTC'}
 
 
-def test_recording_index_path_defaults_to_cache_root_hash(monkeypatch, tmp_path) -> None:
-    home = tmp_path / 'home'
-    monkeypatch.setenv('HOME', str(home))
-    monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
-    root = Path('/archive/root')
-    root_hash = hashlib.sha256(str(root).encode('utf-8')).hexdigest()[:16]
-
-    index_path = webapp.get_recording_index_path(root)
-
-    assert index_path == home / '.cache' / 'fricat' / f'{root_hash}.sqlite'
-
-
-def test_web_index_path_override_is_used(monkeypatch, archive_root: Path, tmp_path: Path) -> None:
-    index_path = tmp_path / 'custom-web-index.sqlite'
-    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
-    client = TestClient(webapp.app)
-    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
-    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
-
-    response = client.get('/api/recordings', params={'start': start, 'end': end})
-
-    assert response.status_code == 200
-    assert [rec['path'] for rec in response.json()] == [
-        '2026-03-24/22_CAM1.mkv',
-        '2026-03-24/23_CAM1.mkv',
-    ]
-    assert index_path.is_file()
-
-
-def test_corrupt_web_index_is_recreated(monkeypatch, archive_root: Path, tmp_path: Path) -> None:
-    index_path = tmp_path / 'corrupt-web-index.sqlite'
-    index_path.write_bytes(b'not sqlite')
-    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
-    client = TestClient(webapp.app)
-    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
-    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
-
-    response = client.get('/api/recordings', params={'start': start, 'end': end})
-
-    assert response.status_code == 200
-    assert [rec['path'] for rec in response.json()] == [
-        '2026-03-24/22_CAM1.mkv',
-        '2026-03-24/23_CAM1.mkv',
-    ]
-    assert index_path.is_file()
-
-
 def test_recorded_dates_are_returned_for_camera(monkeypatch, archive_root: Path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
@@ -213,7 +163,54 @@ def test_recordings_include_activity_profiles(monkeypatch, archive_root: Path) -
     assert all(len(rec['profile']['sound']) == 24 for rec in data)
 
 
-def test_activity_profile_cache_updates_when_sidecar_changes(monkeypatch, archive_root: Path) -> None:
+def test_recordings_range_scans_only_date_window(monkeypatch, tmp_path: Path) -> None:
+    scanned_dates: list[str] = []
+
+    def fake_scan_day_recordings(root: Path, day_dir: Path) -> list[webapp.Recording]:
+        assert root == tmp_path
+        scanned_dates.append(day_dir.name)
+        if day_dir.name != '2026-03-24':
+            return []
+        return [
+            webapp.Recording(
+                camera='CAM2',
+                start_utc=datetime(2026, 3, 24, 10, tzinfo=UTC),
+                path=tmp_path / '2026-03-24' / '10_CAM2.mkv',
+                meta_path=None,
+            ),
+            webapp.Recording(
+                camera='CAM1',
+                start_utc=datetime(2026, 3, 24, 10, tzinfo=UTC),
+                path=tmp_path / '2026-03-24' / '10_CAM1.mkv',
+                meta_path=None,
+            ),
+        ]
+
+    monkeypatch.setattr(webapp, 'scan_day_recordings', fake_scan_day_recordings)
+
+    recordings = webapp.load_recordings_for_range(
+        tmp_path,
+        datetime(2026, 3, 24, 9, 30, tzinfo=UTC),
+        datetime(2026, 3, 24, 10, 30, tzinfo=UTC),
+        'CAM1',
+    )
+
+    assert scanned_dates == ['2026-03-23', '2026-03-24', '2026-03-25']
+    assert [rec.path.name for rec in recordings] == ['10_CAM1.mkv']
+
+
+def test_recordings_range_returns_empty_for_missing_days(tmp_path: Path) -> None:
+    recordings = webapp.load_recordings_for_range(
+        tmp_path,
+        datetime(2026, 3, 24, tzinfo=UTC),
+        datetime(2026, 3, 25, tzinfo=UTC),
+        'CAM1',
+    )
+
+    assert recordings == []
+
+
+def test_activity_profile_updates_when_sidecar_changes(monkeypatch, archive_root: Path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
     start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
@@ -273,37 +270,6 @@ def test_recordings_refresh_when_hour_is_added(monkeypatch, archive_root: Path) 
 
     assert [rec['path'] for rec in response.json()] == [
         '2026-03-24/21_CAM1.mkv',
-        '2026-03-24/22_CAM1.mkv',
-        '2026-03-24/23_CAM1.mkv',
-    ]
-
-
-def test_recordings_serve_stale_index_while_refresh_is_locked(monkeypatch, archive_root: Path) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
-    client = TestClient(webapp.app)
-    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
-    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
-
-    assert [rec.camera for rec in webapp.load_recordings(archive_root.resolve())] == ['CAM1', 'CAM1']
-
-    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
-    assert [rec['path'] for rec in response.json()] == [
-        '2026-03-24/22_CAM1.mkv',
-        '2026-03-24/23_CAM1.mkv',
-    ]
-
-    day_dir = archive_root / '2026-03-24'
-    old_mtime_ns = day_dir.stat().st_mtime_ns
-    (day_dir / '21_CAM1.mkv').write_bytes(b'test-media')
-    os.utime(day_dir, ns=(old_mtime_ns + 1_000_000_000, old_mtime_ns + 1_000_000_000))
-    lock = webapp._refresh_lock(archive_root.resolve())
-    assert lock.acquire(blocking=False)
-    try:
-        response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
-    finally:
-        lock.release()
-
-    assert [rec['path'] for rec in response.json()] == [
         '2026-03-24/22_CAM1.mkv',
         '2026-03-24/23_CAM1.mkv',
     ]
