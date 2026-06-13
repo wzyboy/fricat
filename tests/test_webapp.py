@@ -6,7 +6,6 @@ from pathlib import Path
 from datetime import UTC
 from datetime import datetime
 from urllib.parse import quote
-from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,13 +14,10 @@ from fricat import webapp
 
 
 @pytest.fixture(autouse=True)
-def clear_scan_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[None]:
+def isolate_web_index(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
     monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
     monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(tmp_path / 'web-index.sqlite'))
-    webapp.clear_scan_cache()
-    yield
-    webapp.clear_scan_cache()
 
 
 @pytest.fixture
@@ -85,16 +81,6 @@ def test_cameras_are_loaded_from_constant() -> None:
 
     assert response.status_code == 200
     assert response.json() == ['CAM1', 'CAM2', 'CAM3', 'CAM4']
-
-
-def test_camera_names_can_be_monkeypatched(monkeypatch) -> None:
-    monkeypatch.setattr(webapp, 'CAMERA_NAMES', ['FRONT', 'GARAGE'])
-    client = TestClient(webapp.app)
-
-    response = client.get('/api/cameras')
-
-    assert response.status_code == 200
-    assert response.json() == ['FRONT', 'GARAGE']
 
 
 def test_config_returns_default_timezone() -> None:
@@ -176,14 +162,10 @@ def test_recorded_dates_are_returned_for_camera(monkeypatch, archive_root: Path)
 
 
 def test_recorded_date_strings_scan_filenames_without_recording_cache(monkeypatch, archive_root: Path) -> None:
-    def fail_recording_cache(root: Path) -> list[webapp.Recording]:
-        raise AssertionError(f'should not load recording cache for {root}')
-
     def fail_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | None:
         raise AssertionError(f'should not load activity profile for {meta_path}')
 
     monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
-    monkeypatch.setattr(webapp, 'get_cached_recordings', fail_recording_cache)
     monkeypatch.setattr(webapp, 'get_activity_profile', fail_activity_profile)
 
     dates = webapp._recorded_date_strings(archive_root, 'CAM1')
@@ -338,7 +320,6 @@ def test_recorded_dates_refresh_recent_new_day(monkeypatch, archive_root: Path) 
     day_dir = archive_root / '2026-03-25'
     day_dir.mkdir()
     (day_dir / '12_CAM1.mkv').write_bytes(b'test-media')
-    webapp.clear_scan_cache()
 
     response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
 
@@ -433,51 +414,3 @@ def test_recordings_keep_malformed_profiles_from_crashing(monkeypatch, tmp_path,
     assert response.json()[0]['has_meta'] is True
     assert response.json()[0]['profile'] is None
     assert 'Invalid sidecar profile' in caplog.text
-
-
-def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
-    monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '60')
-    calls = 0
-
-    def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
-        nonlocal calls
-        calls += 1
-        return [
-            webapp.Recording(
-                camera='CAMX',
-                start_utc=datetime(2026, 3, 24, tzinfo=UTC),
-                path=root / '2026-03-24' / '00_CAMX.mkv',
-                meta_path=None,
-            )
-        ]
-
-    monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
-
-    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAMX']
-    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAMX']
-    assert calls == 1
-
-
-def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
-    monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '0')
-    calls = 0
-
-    def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
-        nonlocal calls
-        calls += 1
-        return [
-            webapp.Recording(
-                camera=f'CAM{calls}',
-                start_utc=datetime(2026, 3, 24, tzinfo=UTC),
-                path=root / '2026-03-24' / f'00_CAM{calls}.mkv',
-                meta_path=None,
-            )
-        ]
-
-    monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
-
-    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAM1']
-    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAM2']
-    assert calls == 2

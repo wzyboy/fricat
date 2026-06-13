@@ -4,7 +4,6 @@ import hashlib
 import logging
 import sqlite3
 from time import time
-from time import monotonic
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -43,7 +42,6 @@ class Recording:
     profile_loaded: bool = False
 
 
-_SCAN_CACHE: dict[Path, tuple[float, list[Recording]]] = {}
 _REFRESH_LOCKS: dict[Path, Lock] = {}
 _REFRESH_LOCKS_LOCK = Lock()
 
@@ -627,27 +625,6 @@ def load_recordings_for_range(
         return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
     finally:
         conn.close()
-
-
-def clear_scan_cache() -> None:
-    _SCAN_CACHE.clear()
-
-
-def get_cached_recordings(root: Path) -> list[Recording]:
-    ttl = get_scan_cache_ttl()
-    if ttl == 0:
-        return scan_recordings(root)
-
-    now = monotonic()
-    cached = _SCAN_CACHE.get(root)
-    if cached:
-        cached_at, recordings = cached
-        if now - cached_at < ttl:
-            return recordings
-
-    recordings = load_recordings(root)
-    _SCAN_CACHE[root] = (now, recordings)
-    return recordings
 
 
 def _coerce_float(value: object, field_name: str) -> float:
