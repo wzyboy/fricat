@@ -16,17 +16,68 @@ from fricat import webapp
 def clear_scan_cache(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
     monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
     monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
+    monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
     webapp.clear_scan_cache()
     yield
     webapp.clear_scan_cache()
 
 
-def archive_root() -> Path:
-    return Path(__file__).resolve().parents[1] / 'test_archive'
+@pytest.fixture
+def archive_root(tmp_path: Path) -> Path:
+    day_dir = tmp_path / '2026-03-24'
+    day_dir.mkdir()
+    for hour in ('22', '23'):
+        (day_dir / f'{hour}_CAM1.mkv').write_bytes(b'test-media')
+
+    (day_dir / '22_CAM1.json').write_text(
+        json.dumps(
+            {
+                'camera': 'CAM1',
+                'segments': [
+                    {
+                        'offset': 0.0,
+                        'duration': 150.0,
+                        'motion': 10.0,
+                        'audio_dbfs': -40.0,
+                    },
+                    {
+                        'offset': 150.0,
+                        'duration': 150.0,
+                        'motion': 20.0,
+                        'audio_dbfs': -60.0,
+                    },
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    (day_dir / '23_CAM1.json').write_text(
+        json.dumps(
+            {
+                'camera': 'CAM1',
+                'segments': [
+                    {
+                        'offset': 0.0,
+                        'duration': 150.0,
+                        'motion': 30.0,
+                        'audio_dbfs': None,
+                    },
+                    {
+                        'offset': 150.0,
+                        'duration': 150.0,
+                        'motion': 40.0,
+                        'audio_dbfs': -20.0,
+                    },
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    return tmp_path
 
 
-def test_cameras_are_loaded_from_archive(monkeypatch) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root()))
+def test_cameras_are_loaded_from_archive(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
 
     response = client.get('/api/cameras')
@@ -54,8 +105,8 @@ def test_config_returns_timezone_override(monkeypatch) -> None:
     assert response.json() == {'timezone': 'UTC'}
 
 
-def test_recorded_dates_are_returned_for_camera(monkeypatch) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root()))
+def test_recorded_dates_are_returned_for_camera(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
 
     response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
@@ -82,8 +133,8 @@ def test_recorded_dates_use_archive_timezone(monkeypatch, tmp_path) -> None:
     assert response.json() == ['2026-03-24']
 
 
-def test_recordings_include_activity_profiles(monkeypatch) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root()))
+def test_recordings_include_activity_profiles(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
     start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
     end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
@@ -104,8 +155,8 @@ def test_recordings_include_activity_profiles(monkeypatch) -> None:
     assert all(len(rec['profile']['sound']) == 24 for rec in data)
 
 
-def test_meta_accepts_encoded_path(monkeypatch) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root()))
+def test_meta_accepts_encoded_path(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
 
     response = client.get('/api/meta?path=2026-03-24%2F23_CAM1.mkv')
@@ -129,8 +180,8 @@ def test_media_accepts_encoded_reserved_path_segments(monkeypatch, tmp_path) -> 
     assert response.content == media_body
 
 
-def test_activity_profile_handles_null_audio() -> None:
-    profile = webapp.get_activity_profile(archive_root() / '2026-03-24' / '23_CAM1.json')
+def test_activity_profile_handles_null_audio(archive_root: Path) -> None:
+    profile = webapp.get_activity_profile(archive_root / '2026-03-24' / '23_CAM1.json')
 
     assert profile is not None
     assert len(profile['motion']) == 24
