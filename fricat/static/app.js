@@ -45,13 +45,18 @@ class FricatApp {
     async init() {
         await this.loadConfig();
         await this.loadCameras();
+        this.initializeCurrentDate();
         this.bindEvents();
         this.initCalendar();
-        await this.loadRecordedDates();
-        this.initializeCurrentDate();
-        await this.loadDay();
         this.renderCalendar();
         this.updateUI();
+        await this.loadDay();
+        this.refreshRecordedDates();
+    }
+
+    async refreshRecordedDates() {
+        await this.loadRecordedDates();
+        this.renderCalendar();
     }
 
     bindEvents() {
@@ -67,9 +72,8 @@ class FricatApp {
                 this.elements.cameraBtns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 this.state.currentCamera = btn.dataset.camera;
-                await this.loadRecordedDates();
                 await this.loadDay();
-                this.renderCalendar();
+                await this.refreshRecordedDates();
             });
         });
 
@@ -198,8 +202,7 @@ class FricatApp {
     }
 
     initializeCurrentDate() {
-        const latestRecordedDate = this.recordedDates.at(-1);
-        this.state.currentDate = latestRecordedDate || this.getTodayDateString();
+        this.state.currentDate = this.getTodayDateString();
         this.elements.datePicker.value = this.state.currentDate;
         this.calendarDate = this.parseDateString(this.state.currentDate);
     }

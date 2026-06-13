@@ -175,6 +175,22 @@ def test_recorded_dates_are_returned_for_camera(monkeypatch, archive_root: Path)
     assert response.json() == ['2026-03-24']
 
 
+def test_recorded_date_strings_scan_filenames_without_recording_cache(monkeypatch, archive_root: Path) -> None:
+    def fail_recording_cache(root: Path) -> list[webapp.Recording]:
+        raise AssertionError(f'should not load recording cache for {root}')
+
+    def fail_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | None:
+        raise AssertionError(f'should not load activity profile for {meta_path}')
+
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
+    monkeypatch.setattr(webapp, 'get_cached_recordings', fail_recording_cache)
+    monkeypatch.setattr(webapp, 'get_activity_profile', fail_activity_profile)
+
+    dates = webapp._recorded_date_strings(archive_root, 'CAM1')
+
+    assert dates == ['2026-03-24']
+
+
 def test_recorded_dates_use_archive_timezone(monkeypatch, tmp_path) -> None:
     day_dir = tmp_path / '2026-03-24'
     day_dir.mkdir()
@@ -285,6 +301,8 @@ def test_recordings_serve_stale_index_while_refresh_is_locked(monkeypatch, archi
     client = TestClient(webapp.app)
     start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
     end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
+
+    assert [rec.camera for rec in webapp.load_recordings(archive_root.resolve())] == ['CAM1', 'CAM1']
 
     response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
     assert [rec['path'] for rec in response.json()] == [
@@ -420,7 +438,6 @@ def test_recordings_keep_malformed_profiles_from_crashing(monkeypatch, tmp_path,
 def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
     monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '60')
-    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
     calls = 0
 
     def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
@@ -436,17 +453,15 @@ def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
         ]
 
     monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
-    client = TestClient(webapp.app)
 
-    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
-    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
+    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAMX']
+    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAMX']
     assert calls == 1
 
 
 def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
     monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '0')
-    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
     calls = 0
 
     def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
@@ -462,8 +477,7 @@ def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
         ]
 
     monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
-    client = TestClient(webapp.app)
 
-    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
-    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
+    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAM1']
+    assert [rec.camera for rec in webapp.get_cached_recordings(tmp_path)] == ['CAM2']
     assert calls == 2

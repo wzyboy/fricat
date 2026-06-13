@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
-INDEX_SCHEMA_VERSION = 3
+INDEX_SCHEMA_VERSION = 4
 RECENT_ARCHIVE_DAYS = 2
 CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
 
@@ -221,6 +221,11 @@ def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
             scanned_at real not null
         );
 
+        create table index_state (
+            key text primary key,
+            value text not null
+        );
+
         pragma user_version = {INDEX_SCHEMA_VERSION};
         """
     )
@@ -262,7 +267,12 @@ def _connect_recording_index(root: Path) -> sqlite3.Connection | None:
         return None
 
 
-def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple[object, ...]]:
+def _recording_index_rows(
+    root: Path,
+    recordings: list[Recording],
+    *,
+    cache_profiles: bool,
+) -> list[tuple[object, ...]]:
     rows = []
     for rec in recordings:
         try:
@@ -288,7 +298,7 @@ def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple
             else:
                 meta_mtime_ns = meta_stat.st_mtime_ns
                 meta_size = meta_stat.st_size
-                if not profile_loaded:
+                if cache_profiles and not profile_loaded:
                     profile = get_activity_profile(rec.meta_path)
                     profile_loaded = True
         else:
@@ -322,8 +332,9 @@ def _replace_recording_day(
     recordings: list[Recording],
     dir_mtime_ns: int,
     scanned_at: float,
+    cache_profiles: bool,
 ) -> None:
-    rows = _recording_index_rows(root, recordings)
+    rows = _recording_index_rows(root, recordings, cache_profiles=cache_profiles)
     rel_path = '.' if day_dir == root else day_dir.relative_to(root).as_posix()
     with conn:
         conn.execute('delete from recordings where date_str = ?', (date_str,))
@@ -356,9 +367,21 @@ def _remove_recording_day(conn: sqlite3.Connection, date_str: str) -> None:
         conn.execute('delete from scanned_dirs where date_str = ?', (date_str,))
 
 
-def _index_has_scanned_dirs(conn: sqlite3.Connection) -> bool:
-    count = conn.execute('select count(*) from scanned_dirs').fetchone()[0]
-    return count > 0
+def _index_full_scan_complete(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("select value from index_state where key = 'full_scan_complete'").fetchone()
+    return row is not None and row['value'] == '1'
+
+
+def _set_index_full_scan_complete(conn: sqlite3.Connection, complete: bool) -> None:
+    with conn:
+        conn.execute(
+            """
+            insert into index_state (key, value)
+            values ('full_scan_complete', ?)
+            on conflict(key) do update set value = excluded.value
+            """,
+            ('1' if complete else '0',),
+        )
 
 
 def _acquire_refresh_lock(root: Path, stale_available: bool) -> Lock | None:
@@ -417,6 +440,7 @@ def _refresh_index_days(
     date_strs: list[str],
     *,
     force: bool = False,
+    cache_profiles: bool = False,
 ) -> None:
     ttl = get_scan_cache_ttl()
     now = time()
@@ -441,6 +465,7 @@ def _refresh_index_days(
             recordings,
             dir_stat.st_mtime_ns,
             now,
+            cache_profiles,
         )
 
 
@@ -546,17 +571,20 @@ def load_recordings(root: Path) -> list[Recording]:
         return scan_recordings(root)
 
     try:
-        lock = _acquire_refresh_lock(root, _index_has_scanned_dirs(conn))
+        lock = _acquire_refresh_lock(root, _index_full_scan_complete(conn))
         if lock is None:
             return _load_indexed_recordings(conn, root)
         try:
-            if _index_has_scanned_dirs(conn):
-                _refresh_index_days(conn, root, _recent_archive_date_strs(root))
+            if _index_full_scan_complete(conn):
+                _refresh_index_days(conn, root, _recent_archive_date_strs(root), cache_profiles=False)
             else:
                 date_strs = _all_archive_date_strs(root)
                 if not date_strs:
+                    _set_index_full_scan_complete(conn, True)
                     return scan_recordings(root)
-                _refresh_index_days(conn, root, date_strs, force=True)
+                _set_index_full_scan_complete(conn, False)
+                _refresh_index_days(conn, root, date_strs, force=True, cache_profiles=False)
+                _set_index_full_scan_complete(conn, True)
         finally:
             lock.release()
         recordings = _load_indexed_recordings(conn, root)
@@ -582,7 +610,7 @@ def load_recordings_for_range(
         ]
 
     try:
-        lock = _acquire_refresh_lock(root, _index_has_scanned_dirs(conn))
+        lock = _acquire_refresh_lock(root, _index_full_scan_complete(conn))
         if lock is None:
             return _load_indexed_recordings_for_range(
                 conn,
@@ -593,7 +621,7 @@ def load_recordings_for_range(
                 refresh_profiles=False,
             )
         try:
-            _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt))
+            _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt), cache_profiles=False)
         finally:
             lock.release()
         return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
@@ -710,14 +738,30 @@ def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list
 
 
 def _recorded_date_strings(root: Path, camera: str | None) -> list[str]:
-    recordings = get_cached_recordings(root)
     archive_tz = get_archive_tz()
     dates = set()
-    for rec in recordings:
-        if camera and rec.camera != camera:
+    for day_dir in _iter_archive_day_dirs(root):
+        try:
+            entries = list(os.scandir(day_dir))
+        except OSError as err:
+            logger.warning('Failed to list archive day %s: %s', day_dir, err)
             continue
-        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
-        dates.add(local_dt.strftime('%Y-%m-%d'))
+
+        for entry in entries:
+            if not entry.name.endswith('.mkv'):
+                continue
+            parsed = parse_recording_path(root, day_dir / entry.name)
+            if not parsed:
+                continue
+            date_str, hour_str, rec_camera = parsed
+            if camera and rec_camera != camera:
+                continue
+            try:
+                start_utc = _recording_start_utc(date_str, hour_str)
+            except ValueError:
+                continue
+            local_dt = start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
+            dates.add(local_dt.strftime('%Y-%m-%d'))
     return sorted(list(dates))
 
 
