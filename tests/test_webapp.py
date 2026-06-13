@@ -1,10 +1,10 @@
 import json
 import logging
-from collections.abc import Generator
+from pathlib import Path
 from datetime import UTC
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import quote
+from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient

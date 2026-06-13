@@ -1,21 +1,21 @@
 import os
 import json
 import logging
-from dataclasses import dataclass
+from time import monotonic
+from pathlib import Path
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
-from pathlib import Path
-from time import monotonic
 from zoneinfo import ZoneInfo
+from dataclasses import dataclass
 
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from fricat.utils import parse_recording_path
 
+from fricat.utils import parse_recording_path
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
             raise ValueError('segments must be a list')
         if not segments:
             return None
-            
+
         # Downsample 3600 seconds into 24 bins (150 seconds per bin)
         bins_count = 24
         bin_size = 150.0
@@ -145,27 +145,27 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
         sound_bins = [0.0] * bins_count
         motion_counts = [0] * bins_count
         sound_counts = [0] * bins_count
-        
+
         for seg in segments:
             if not isinstance(seg, dict):
                 raise ValueError('segment must be an object')
             offset = _coerce_float(seg.get('offset', 0.0), 'offset')
             bin_idx = min(int(offset / bin_size), bins_count - 1)
-            
+
             motion = _coerce_float(seg.get('motion', 0.0), 'motion')
             audio = seg.get('audio_dbfs')
             if audio is None:
                 audio = -80.0
             else:
                 audio = _coerce_float(audio, 'audio_dbfs')
-            
+
             motion_bins[bin_idx] += motion
             motion_counts[bin_idx] += 1
-            
+
             if audio > -80.0:
                 sound_bins[bin_idx] += audio
                 sound_counts[bin_idx] += 1
-                
+
         # Calculate averages
         for i in range(bins_count):
             if motion_counts[i] > 0:
@@ -174,16 +174,11 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
                 sound_bins[i] = sound_bins[i] / sound_counts[i]
             else:
                 sound_bins[i] = -80.0
-                
+
         # Normalize sound to 0-100 range for easy drawing
-        sound_normalized = [
-            max(0.0, (val + 80.0) / 80.0) * 100.0 for val in sound_bins
-        ]
-        
-        return {
-            'motion': [round(v, 1) for v in motion_bins],
-            'sound': [round(v, 1) for v in sound_normalized]
-        }
+        sound_normalized = [max(0.0, (val + 80.0) / 80.0) * 100.0 for val in sound_bins]
+
+        return {'motion': [round(v, 1) for v in motion_bins], 'sound': [round(v, 1) for v in sound_normalized]}
     except ValueError as err:
         logger.warning('Invalid sidecar profile in %s: %s', meta_path, err)
         return None
@@ -197,9 +192,8 @@ def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list
         'start_utc': rec.start_utc.replace(tzinfo=UTC).isoformat(),
         'path': rel,
         'has_meta': rec.meta_path is not None,
-        'profile': profile
+        'profile': profile,
     }
-
 
 
 app = FastAPI(title='fricat archive')

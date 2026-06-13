@@ -1,19 +1,20 @@
 import shlex
 import itertools
 import subprocess
+from time import time
+from time import perf_counter
+from pathlib import Path
 from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
-from pathlib import Path
 from tempfile import NamedTemporaryFile
-from time import time
-from time import perf_counter
 
 import click
+
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
-from fricat.sidecar import generate_sidecar
 from fricat.sidecar import write_sidecar
+from fricat.sidecar import generate_sidecar
 
 
 def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
@@ -24,13 +25,13 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
         list_file.flush()
         _input = shlex.quote(list_file.name)
         _output = shlex.quote(str(dst_file))
-        _ffmpeg = f'''
+        _ffmpeg = f"""
             ffmpeg -hide_banner -loglevel warning
             -f concat -safe 0
             -i {_input}
             -c copy
             {_output}
-        '''
+        """
         ffmpeg = shlex.split(_ffmpeg, comments=True)
         print(shlex.join(ffmpeg))
         dst_file.parent.mkdir(parents=True, exist_ok=True)

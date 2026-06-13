@@ -1,5 +1,5 @@
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 
 def dir_size(path: Path) -> int:
