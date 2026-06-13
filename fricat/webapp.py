@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-from time import monotonic
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -14,6 +13,7 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from fricat.utils import parse_recording_path
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
+CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
 
 
 @dataclass(frozen=True)
@@ -31,9 +32,6 @@ class Recording:
     start_utc: datetime
     path: Path
     meta_path: Path | None
-
-
-_SCAN_CACHE: dict[Path, tuple[float, list[Recording]]] = {}
 
 
 def get_archive_root() -> Path:
@@ -51,14 +49,6 @@ def get_archive_tz() -> ZoneInfo:
     return ZoneInfo(get_archive_timezone_name())
 
 
-def get_scan_cache_ttl() -> float:
-    raw_ttl = os.environ.get('FRICAT_SCAN_CACHE_TTL_SECONDS', '5')
-    try:
-        return max(0.0, float(raw_ttl))
-    except ValueError:
-        return 5.0
-
-
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
     filename_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00')
     if filename_dt < LEGACY_FILENAME_CUTOFF:
@@ -66,9 +56,42 @@ def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
     return filename_dt.replace(tzinfo=UTC)
 
 
-def scan_recordings(root: Path) -> list[Recording]:
+def _archive_date_str(path: Path) -> str | None:
+    try:
+        datetime.fromisoformat(f'{path.name} 00:00:00')
+    except ValueError:
+        return None
+    return path.name
+
+
+def _iter_archive_day_dirs(root: Path) -> list[Path]:
+    if _archive_date_str(root):
+        return [root]
+
+    try:
+        children = list(root.iterdir())
+    except OSError as err:
+        logger.warning('Failed to list archive root %s: %s', root, err)
+        return []
+
+    return sorted(child for child in children if child.is_dir() and _archive_date_str(child))
+
+
+def _day_dir_for_date(root: Path, date_str: str) -> Path:
+    if _archive_date_str(root) == date_str:
+        return root
+    return root / date_str
+
+
+def scan_day_recordings(root: Path, day_dir: Path) -> list[Recording]:
     recordings: list[Recording] = []
-    for path in root.rglob('*.mkv'):
+    try:
+        paths = sorted(day_dir.glob('*.mkv'))
+    except OSError as err:
+        logger.warning('Failed to list archive day %s: %s', day_dir, err)
+        return recordings
+
+    for path in paths:
         parsed = parse_recording_path(root, path)
         if not parsed:
             continue
@@ -86,33 +109,56 @@ def scan_recordings(root: Path) -> list[Recording]:
                 meta_path=meta_path if meta_path.exists() else None,
             )
         )
+    return recordings
+
+
+def scan_recordings(root: Path) -> list[Recording]:
+    recordings: list[Recording] = []
+    for day_dir in _iter_archive_day_dirs(root):
+        recordings.extend(scan_day_recordings(root, day_dir))
     recordings.sort(key=lambda rec: (rec.start_utc, rec.camera))
     return recordings
 
 
-def clear_scan_cache() -> None:
-    _SCAN_CACHE.clear()
+def _range_archive_date_strs(start_dt: datetime, end_dt: datetime) -> list[str]:
+    first_date = (start_dt - timedelta(days=1)).date()
+    last_date = (end_dt + timedelta(days=1)).date()
+    dates = []
+    current = first_date
+    while current <= last_date:
+        dates.append(current.isoformat())
+        current += timedelta(days=1)
+    return dates
 
 
-def get_cached_recordings(root: Path) -> list[Recording]:
-    ttl = get_scan_cache_ttl()
-    if ttl == 0:
-        return scan_recordings(root)
+def load_recordings(root: Path) -> list[Recording]:
+    return scan_recordings(root)
 
-    now = monotonic()
-    cached = _SCAN_CACHE.get(root)
-    if cached:
-        cached_at, recordings = cached
-        if now - cached_at < ttl:
-            return recordings
 
-    recordings = scan_recordings(root)
-    _SCAN_CACHE[root] = (now, recordings)
+def load_recordings_for_range(
+    root: Path,
+    start_dt: datetime,
+    end_dt: datetime,
+    camera: str | None,
+) -> list[Recording]:
+    recordings: list[Recording] = []
+    for date_str in _range_archive_date_strs(start_dt, end_dt):
+        day_recordings = scan_day_recordings(root, _day_dir_for_date(root, date_str))
+        recordings.extend(
+            rec
+            for rec in day_recordings
+            if (not camera or rec.camera == camera)
+            and rec.start_utc + timedelta(hours=1) > start_dt
+            and rec.start_utc < end_dt
+        )
+    recordings.sort(key=lambda rec: (rec.start_utc, rec.camera))
     return recordings
 
 
 def _coerce_float(value: object, field_name: str) -> float:
     if isinstance(value, bool):
+        raise ValueError(f'{field_name} must be numeric')
+    if not isinstance(value, int | float | str):
         raise ValueError(f'{field_name} must be numeric')
     try:
         return float(value)
@@ -186,14 +232,67 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
 
 def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list[float]] | None]:
     rel = rec.path.relative_to(get_archive_root()).as_posix()
-    profile = get_activity_profile(rec.meta_path)
     return {
         'camera': rec.camera,
         'start_utc': rec.start_utc.replace(tzinfo=UTC).isoformat(),
         'path': rel,
         'has_meta': rec.meta_path is not None,
-        'profile': profile,
+        'profile': get_activity_profile(rec.meta_path),
     }
+
+
+def _recorded_date_strings(root: Path, camera: str | None) -> list[str]:
+    archive_tz = get_archive_tz()
+    dates = set()
+    for day_dir in _iter_archive_day_dirs(root):
+        try:
+            entries = list(os.scandir(day_dir))
+        except OSError as err:
+            logger.warning('Failed to list archive day %s: %s', day_dir, err)
+            continue
+
+        for entry in entries:
+            if not entry.name.endswith('.mkv'):
+                continue
+            parsed = parse_recording_path(root, day_dir / entry.name)
+            if not parsed:
+                continue
+            date_str, hour_str, rec_camera = parsed
+            if camera and rec_camera != camera:
+                continue
+            try:
+                start_utc = _recording_start_utc(date_str, hour_str)
+            except ValueError:
+                continue
+            local_dt = start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
+            dates.add(local_dt.strftime('%Y-%m-%d'))
+    return sorted(list(dates))
+
+
+def _serialized_recordings_for_range(
+    root: Path,
+    start_dt: datetime,
+    end_dt: datetime,
+    camera: str | None,
+) -> list[dict[str, str | bool | dict[str, list[float]] | None]]:
+    recordings = load_recordings_for_range(root, start_dt, end_dt, camera)
+    return [serialize_recording(rec) for rec in recordings]
+
+
+def _read_sidecar(path: str) -> object:
+    root = get_archive_root()
+    file_path = (root / path).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail='File not found')
+    sidecar_path = file_path.with_suffix('.json')
+    if not sidecar_path.is_file():
+        raise HTTPException(status_code=404, detail='Sidecar not found')
+    try:
+        return json.loads(sidecar_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
 
 
 app = FastAPI(title='fricat archive')
@@ -216,24 +315,14 @@ async def config() -> JSONResponse:
 
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
-    root = get_archive_root()
-    recordings = get_cached_recordings(root)
-    cameras = sorted({rec.camera for rec in recordings})
-    return JSONResponse(content=cameras)
+    return JSONResponse(content=list(CAMERA_NAMES))
 
 
 @app.get('/api/recorded_dates')
 async def recorded_dates(camera: str | None = None) -> JSONResponse:
     root = get_archive_root()
-    recordings = get_cached_recordings(root)
-    archive_tz = get_archive_tz()
-    dates = set()
-    for rec in recordings:
-        if camera and rec.camera != camera:
-            continue
-        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
-        dates.add(local_dt.strftime('%Y-%m-%d'))
-    return JSONResponse(content=sorted(list(dates)))
+    dates = await run_in_threadpool(_recorded_date_strings, root, camera)
+    return JSONResponse(content=dates)
 
 
 @app.get('/api/recordings')
@@ -241,18 +330,15 @@ async def recordings(start: float, end: float, camera: str | None = None) -> JSO
     if start >= end:
         raise HTTPException(status_code=400, detail='start must be less than end')
     root = get_archive_root()
-    recordings = get_cached_recordings(root)
     start_dt = datetime.fromtimestamp(start, tz=UTC)
     end_dt = datetime.fromtimestamp(end, tz=UTC)
-
-    filtered: list[dict[str, str | bool]] = []
-    for rec in recordings:
-        if camera and rec.camera != camera:
-            continue
-        rec_end = rec.start_utc + timedelta(hours=1)
-        if rec_end <= start_dt or rec.start_utc >= end_dt:
-            continue
-        filtered.append(serialize_recording(rec))
+    filtered = await run_in_threadpool(
+        _serialized_recordings_for_range,
+        root,
+        start_dt,
+        end_dt,
+        camera,
+    )
 
     return JSONResponse(content=filtered)
 
@@ -272,17 +358,5 @@ async def media(path: str) -> FileResponse:
 
 @app.get('/api/meta')
 async def meta(path: str) -> JSONResponse:
-    root = get_archive_root()
-    file_path = (root / path).resolve()
-    try:
-        file_path.relative_to(root)
-    except ValueError:
-        raise HTTPException(status_code=404, detail='File not found')
-    sidecar_path = file_path.with_suffix('.json')
-    if not sidecar_path.is_file():
-        raise HTTPException(status_code=404, detail='Sidecar not found')
-    try:
-        data = json.loads(sidecar_path.read_text(encoding='utf-8'))
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
+    data = await run_in_threadpool(_read_sidecar, path)
     return JSONResponse(content=data)
