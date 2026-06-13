@@ -1,6 +1,3 @@
-from __future__ import annotations
-print("DEBUG LOADED WEBAPP:", __file__)
-
 import os
 import json
 from dataclasses import dataclass
