@@ -35,6 +35,9 @@ class FricatApp {
             cameraSelector: document.querySelector('.camera-selector'),
             cameraBtns: []
         };
+        this.recordedDatesRequestSeq = 0;
+        this.dayRequestSeq = 0;
+        this.activityRequestSeq = 0;
 
         this.init();
     }
@@ -198,20 +201,25 @@ class FricatApp {
     }
 
     async loadRecordedDates() {
+        const requestSeq = ++this.recordedDatesRequestSeq;
         if (!this.state.currentCamera) {
             this.recordedDates = [];
             return;
         }
 
         try {
-            const res = await fetch(`/api/recorded_dates?camera=${this.state.currentCamera}`);
+            const params = new URLSearchParams({ camera: this.state.currentCamera });
+            const res = await fetch(`/api/recorded_dates?${params}`);
+            if (requestSeq !== this.recordedDatesRequestSeq) return;
             if (res.ok) {
                 const data = await res.json();
+                if (requestSeq !== this.recordedDatesRequestSeq) return;
                 this.recordedDates = Array.isArray(data) ? data : [];
             } else {
                 this.recordedDates = [];
             }
         } catch (err) {
+            if (requestSeq !== this.recordedDatesRequestSeq) return;
             console.error('Failed to load recorded dates', err);
             this.recordedDates = [];
         }
@@ -301,6 +309,7 @@ class FricatApp {
     }
 
     async loadDay() {
+        const requestSeq = ++this.dayRequestSeq;
         if (!this.state.currentCamera) {
             this.state.recordings = [];
             this.renderHourList();
@@ -315,8 +324,14 @@ class FricatApp {
         const queryEnd = start + 86400 + 43200;
         
         try {
-            const res = await fetch(`/api/recordings?start=${queryStart}&end=${queryEnd}&camera=${this.state.currentCamera}`);
+            const params = new URLSearchParams({
+                start: queryStart.toString(),
+                end: queryEnd.toString(),
+                camera: this.state.currentCamera,
+            });
+            const res = await fetch(`/api/recordings?${params}`);
             const allRecordings = await res.json();
+            if (requestSeq !== this.dayRequestSeq) return;
             
             // Filter recordings whose start time in the archive timezone is on the current date
             this.state.recordings = allRecordings.filter(r => {
@@ -334,6 +349,7 @@ class FricatApp {
                 this.clearVideo();
             }
         } catch (err) {
+            if (requestSeq !== this.dayRequestSeq) return;
             console.error('Failed to load recordings', err);
         }
     }
@@ -415,6 +431,7 @@ class FricatApp {
         if (recording.has_meta) {
             this.loadActivity(recording.path);
         } else {
+            this.activityRequestSeq += 1;
             this.clearActivity();
         }
     }
@@ -431,11 +448,15 @@ class FricatApp {
     }
 
     async loadActivity(path) {
+        const requestSeq = ++this.activityRequestSeq;
         try {
-            const res = await fetch(`/api/meta?path=${encodeURIComponent(path)}`);
+            const params = new URLSearchParams({ path });
+            const res = await fetch(`/api/meta?${params}`);
             const data = await res.json();
+            if (requestSeq !== this.activityRequestSeq) return;
             this.drawActivity(data);
         } catch (e) {
+            if (requestSeq !== this.activityRequestSeq) return;
             console.error('Meta load failed', e);
         }
     }
@@ -578,6 +599,7 @@ class FricatApp {
         this.elements.video.src = '';
         this.elements.videoTimestamp.textContent = '--:--:--';
         this.state.isPlaying = false;
+        this.activityRequestSeq += 1;
         this.updateUI();
         this.clearActivity();
     }
