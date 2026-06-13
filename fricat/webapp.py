@@ -13,12 +13,12 @@ from zoneinfo import ZoneInfo
 from threading import Lock
 from dataclasses import dataclass
 
-import anyio
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from fricat.utils import parse_recording_path
 
@@ -624,6 +624,8 @@ def get_cached_recordings(root: Path) -> list[Recording]:
 def _coerce_float(value: object, field_name: str) -> float:
     if isinstance(value, bool):
         raise ValueError(f'{field_name} must be numeric')
+    if not isinstance(value, int | float | str):
+        raise ValueError(f'{field_name} must be numeric')
     try:
         return float(value)
     except (TypeError, ValueError) as err:
@@ -770,14 +772,14 @@ async def config() -> JSONResponse:
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
     root = get_archive_root()
-    cameras = await anyio.to_thread.run_sync(_camera_names, root)
+    cameras = await run_in_threadpool(_camera_names, root)
     return JSONResponse(content=cameras)
 
 
 @app.get('/api/recorded_dates')
 async def recorded_dates(camera: str | None = None) -> JSONResponse:
     root = get_archive_root()
-    dates = await anyio.to_thread.run_sync(_recorded_date_strings, root, camera)
+    dates = await run_in_threadpool(_recorded_date_strings, root, camera)
     return JSONResponse(content=dates)
 
 
@@ -788,7 +790,7 @@ async def recordings(start: float, end: float, camera: str | None = None) -> JSO
     root = get_archive_root()
     start_dt = datetime.fromtimestamp(start, tz=UTC)
     end_dt = datetime.fromtimestamp(end, tz=UTC)
-    filtered = await anyio.to_thread.run_sync(
+    filtered = await run_in_threadpool(
         _serialized_recordings_for_range,
         root,
         start_dt,
@@ -814,5 +816,5 @@ async def media(path: str) -> FileResponse:
 
 @app.get('/api/meta')
 async def meta(path: str) -> JSONResponse:
-    data = await anyio.to_thread.run_sync(_read_sidecar, path)
+    data = await run_in_threadpool(_read_sidecar, path)
     return JSONResponse(content=data)
