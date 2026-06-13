@@ -1,9 +1,8 @@
 import os
 import json
-import sqlite3
 import hashlib
 import logging
-from threading import Lock
+import sqlite3
 from time import time
 from time import monotonic
 from pathlib import Path
@@ -11,6 +10,7 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from zoneinfo import ZoneInfo
+from threading import Lock
 from dataclasses import dataclass
 
 import anyio
@@ -192,7 +192,7 @@ def scan_recordings(root: Path) -> list[Recording]:
 
 def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
-        f'''
+        f"""
         drop table if exists recordings;
 
         create table recordings (
@@ -221,7 +221,7 @@ def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
         );
 
         pragma user_version = {INDEX_SCHEMA_VERSION};
-        '''
+        """
     )
 
 
@@ -327,24 +327,24 @@ def _replace_recording_day(
     with conn:
         conn.execute('delete from recordings where date_str = ?', (date_str,))
         conn.executemany(
-            '''
+            """
             insert into recordings (
                 rel_path, camera, start_ts, date_str, hour_str, media_mtime_ns,
                 media_size, meta_rel_path, meta_mtime_ns, meta_size,
                 profile_json, profile_loaded
             ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''',
+            """,
             rows,
         )
         conn.execute(
-            '''
+            """
             insert into scanned_dirs (date_str, rel_path, dir_mtime_ns, scanned_at)
             values (?, ?, ?, ?)
             on conflict(date_str) do update set
                 rel_path = excluded.rel_path,
                 dir_mtime_ns = excluded.dir_mtime_ns,
                 scanned_at = excluded.scanned_at
-            ''',
+            """,
             (date_str, rel_path, dir_mtime_ns, scanned_at),
         )
 
@@ -445,11 +445,11 @@ def _refresh_index_days(
 
 def _load_indexed_recordings(conn: sqlite3.Connection, root: Path) -> list[Recording]:
     rows = conn.execute(
-        '''
+        """
         select rel_path, camera, start_ts, meta_rel_path
         from recordings
         order by start_ts, camera
-        '''
+        """
     ).fetchall()
     return [_recording_from_index_row(root, row) for row in rows]
 
@@ -495,7 +495,7 @@ def _refresh_profile_cache_for_rows(conn: sqlite3.Connection, root: Path, rows: 
         return False
     with conn:
         conn.executemany(
-            '''
+            """
             update recordings set
                 meta_rel_path = ?,
                 meta_mtime_ns = ?,
@@ -503,7 +503,7 @@ def _refresh_profile_cache_for_rows(conn: sqlite3.Connection, root: Path, rows: 
                 profile_json = ?,
                 profile_loaded = ?
             where rel_path = ?
-            ''',
+            """,
             updates,
         )
     return True
@@ -523,7 +523,7 @@ def _load_indexed_recordings_for_range(
     if camera:
         camera_filter = 'and camera = ?'
         params.append(camera)
-    query = f'''
+    query = f"""
     select
         rel_path, camera, start_ts, meta_rel_path, meta_mtime_ns, meta_size,
         profile_json, profile_loaded
@@ -531,16 +531,12 @@ def _load_indexed_recordings_for_range(
     where start_ts > ? and start_ts < ?
     {camera_filter}
     order by start_ts, camera
-    '''
+    """
     rows = conn.execute(query, params).fetchall()
     if refresh_profiles and _refresh_profile_cache_for_rows(conn, root, rows):
         rows = conn.execute(query, params).fetchall()
     recordings = [_recording_from_index_row(root, row, include_profile=True) for row in rows]
-    return [
-        rec
-        for rec in recordings
-        if rec.start_utc + timedelta(hours=1) > start_dt and rec.start_utc < end_dt
-    ]
+    return [rec for rec in recordings if rec.start_utc + timedelta(hours=1) > start_dt and rec.start_utc < end_dt]
 
 
 def load_recordings(root: Path) -> list[Recording]:
