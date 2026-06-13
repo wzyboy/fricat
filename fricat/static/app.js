@@ -188,6 +188,10 @@ class FricatApp {
         return `${parts.year}-${parts.month}-${parts.day}`;
     }
 
+    encodeMediaPath(path) {
+        return path.split('/').map(segment => encodeURIComponent(segment)).join('/');
+    }
+
     parseDateString(dateStr) {
         const [year, month, day] = dateStr.split('-').map(Number);
         return new Date(year, month - 1, day);
@@ -421,7 +425,7 @@ class FricatApp {
 
     async loadRecording(recording) {
         this.state.currentHour = recording;
-        this.elements.video.src = `/media/${recording.path}`;
+        this.elements.video.src = `/media/${this.encodeMediaPath(recording.path)}`;
         this.state.isPlaying = false;
         this.updateUI();
         this.renderHourList();

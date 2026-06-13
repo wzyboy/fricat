@@ -3,6 +3,7 @@ from collections.abc import Generator
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
@@ -110,6 +111,21 @@ def test_meta_accepts_encoded_path(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()['camera'] == 'CAM1'
+
+
+def test_media_accepts_encoded_reserved_path_segments(monkeypatch, tmp_path) -> None:
+    day_dir = tmp_path / '2026-03-24'
+    day_dir.mkdir()
+    filename = '00_CAM & #%?.mkv'
+    media_body = b'test-media'
+    (day_dir / filename).write_bytes(media_body)
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
+    client = TestClient(webapp.app)
+
+    response = client.get(f'/media/2026-03-24/{quote(filename)}')
+
+    assert response.status_code == 200
+    assert response.content == media_body
 
 
 def test_activity_profile_handles_null_audio() -> None:
