@@ -196,6 +196,45 @@ def test_recordings_include_activity_profiles(monkeypatch, archive_root: Path) -
     assert all(len(rec['profile']['sound']) == 24 for rec in data)
 
 
+def test_activity_profile_cache_updates_when_sidecar_changes(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
+
+    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+    recording = next(rec for rec in response.json() if rec['path'] == '2026-03-24/22_CAM1.mkv')
+    assert recording['profile']['motion'][0] == 10.0
+
+    day_dir = archive_root / '2026-03-24'
+    sidecar = day_dir / '22_CAM1.json'
+    old_day_mtime_ns = day_dir.stat().st_mtime_ns
+    old_sidecar_mtime_ns = sidecar.stat().st_mtime_ns
+    sidecar.write_text(
+        json.dumps(
+            {
+                'camera': 'CAM1',
+                'segments': [
+                    {
+                        'offset': 0.0,
+                        'duration': 150.0,
+                        'motion': 90.0,
+                        'audio_dbfs': -40.0,
+                    }
+                ],
+            }
+        ),
+        encoding='utf-8',
+    )
+    os.utime(sidecar, ns=(old_sidecar_mtime_ns + 1_000_000_000, old_sidecar_mtime_ns + 1_000_000_000))
+    os.utime(day_dir, ns=(old_day_mtime_ns, old_day_mtime_ns))
+
+    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+    recording = next(rec for rec in response.json() if rec['path'] == '2026-03-24/22_CAM1.mkv')
+
+    assert recording['profile']['motion'][0] == 90.0
+
+
 def test_recordings_refresh_when_hour_is_added(monkeypatch, archive_root: Path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)

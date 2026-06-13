@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 RECENT_ARCHIVE_DAYS = 2
 
 
@@ -38,6 +38,8 @@ class Recording:
     start_utc: datetime
     path: Path
     meta_path: Path | None
+    profile: dict[str, list[float]] | None = None
+    profile_loaded: bool = False
 
 
 _SCAN_CACHE: dict[Path, tuple[float, list[Recording]]] = {}
@@ -92,13 +94,35 @@ def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
     return filename_dt.replace(tzinfo=UTC)
 
 
-def _recording_from_index_row(root: Path, row: sqlite3.Row) -> Recording:
+def _profile_from_json(raw_profile: str | None) -> dict[str, list[float]] | None:
+    if not raw_profile:
+        return None
+    try:
+        profile = json.loads(raw_profile)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(profile, dict):
+        return None
+    motion = profile.get('motion')
+    sound = profile.get('sound')
+    if not isinstance(motion, list) or not isinstance(sound, list):
+        return None
+    try:
+        return {'motion': [float(v) for v in motion], 'sound': [float(v) for v in sound]}
+    except (TypeError, ValueError):
+        return None
+
+
+def _recording_from_index_row(root: Path, row: sqlite3.Row, *, include_profile: bool = False) -> Recording:
     meta_rel_path = row['meta_rel_path']
+    profile = _profile_from_json(row['profile_json']) if include_profile else None
     return Recording(
         camera=row['camera'],
         start_utc=datetime.fromtimestamp(row['start_ts'], tz=UTC),
         path=root / row['rel_path'],
         meta_path=(root / meta_rel_path) if meta_rel_path else None,
+        profile=profile,
+        profile_loaded=include_profile and bool(row['profile_loaded']),
     )
 
 
@@ -181,7 +205,9 @@ def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
             media_size integer not null,
             meta_rel_path text,
             meta_mtime_ns integer,
-            meta_size integer
+            meta_size integer,
+            profile_json text,
+            profile_loaded integer not null
         );
 
         create index recordings_start_idx on recordings(start_ts);
@@ -250,6 +276,8 @@ def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple
         meta_rel_path = None
         meta_mtime_ns = None
         meta_size = None
+        profile = rec.profile
+        profile_loaded = rec.profile_loaded
         if rec.meta_path:
             try:
                 meta_stat = rec.meta_path.stat()
@@ -259,6 +287,12 @@ def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple
             else:
                 meta_mtime_ns = meta_stat.st_mtime_ns
                 meta_size = meta_stat.st_size
+                if not profile_loaded:
+                    profile = get_activity_profile(rec.meta_path)
+                    profile_loaded = True
+        else:
+            profile_loaded = True
+        profile_json = json.dumps(profile, separators=(',', ':')) if profile is not None else None
 
         rows.append(
             (
@@ -272,6 +306,8 @@ def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple
                 meta_rel_path,
                 meta_mtime_ns,
                 meta_size,
+                profile_json,
+                int(profile_loaded),
             )
         )
     return rows
@@ -294,8 +330,9 @@ def _replace_recording_day(
             '''
             insert into recordings (
                 rel_path, camera, start_ts, date_str, hour_str, media_mtime_ns,
-                media_size, meta_rel_path, meta_mtime_ns, meta_size
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                media_size, meta_rel_path, meta_mtime_ns, meta_size,
+                profile_json, profile_loaded
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''',
             rows,
         )
@@ -417,29 +454,88 @@ def _load_indexed_recordings(conn: sqlite3.Connection, root: Path) -> list[Recor
     return [_recording_from_index_row(root, row) for row in rows]
 
 
+def _profile_cache_update(root: Path, row: sqlite3.Row) -> tuple[object, ...] | None:
+    media_path = root / row['rel_path']
+    sidecar_path = media_path.with_suffix('.json')
+    try:
+        meta_stat = sidecar_path.stat()
+        meta_rel_path = sidecar_path.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        if row['meta_rel_path'] is None and row['profile_loaded']:
+            return None
+        return (None, None, None, None, 1, row['rel_path'])
+
+    if (
+        row['meta_rel_path'] == meta_rel_path
+        and row['meta_mtime_ns'] == meta_stat.st_mtime_ns
+        and row['meta_size'] == meta_stat.st_size
+        and row['profile_loaded']
+    ):
+        return None
+
+    profile = get_activity_profile(sidecar_path)
+    profile_json = json.dumps(profile, separators=(',', ':')) if profile is not None else None
+    return (
+        meta_rel_path,
+        meta_stat.st_mtime_ns,
+        meta_stat.st_size,
+        profile_json,
+        1,
+        row['rel_path'],
+    )
+
+
+def _refresh_profile_cache_for_rows(conn: sqlite3.Connection, root: Path, rows: list[sqlite3.Row]) -> bool:
+    updates = []
+    for row in rows:
+        update = _profile_cache_update(root, row)
+        if update is not None:
+            updates.append(update)
+    if not updates:
+        return False
+    with conn:
+        conn.executemany(
+            '''
+            update recordings set
+                meta_rel_path = ?,
+                meta_mtime_ns = ?,
+                meta_size = ?,
+                profile_json = ?,
+                profile_loaded = ?
+            where rel_path = ?
+            ''',
+            updates,
+        )
+    return True
+
+
 def _load_indexed_recordings_for_range(
     conn: sqlite3.Connection,
     root: Path,
     start_dt: datetime,
     end_dt: datetime,
     camera: str | None,
+    *,
+    refresh_profiles: bool = True,
 ) -> list[Recording]:
     params: list[object] = [(start_dt - timedelta(hours=1)).timestamp(), end_dt.timestamp()]
     camera_filter = ''
     if camera:
         camera_filter = 'and camera = ?'
         params.append(camera)
-    rows = conn.execute(
-        f'''
-        select rel_path, camera, start_ts, meta_rel_path
-        from recordings
-        where start_ts > ? and start_ts < ?
-        {camera_filter}
-        order by start_ts, camera
-        ''',
-        params,
-    ).fetchall()
-    recordings = [_recording_from_index_row(root, row) for row in rows]
+    query = f'''
+    select
+        rel_path, camera, start_ts, meta_rel_path, meta_mtime_ns, meta_size,
+        profile_json, profile_loaded
+    from recordings
+    where start_ts > ? and start_ts < ?
+    {camera_filter}
+    order by start_ts, camera
+    '''
+    rows = conn.execute(query, params).fetchall()
+    if refresh_profiles and _refresh_profile_cache_for_rows(conn, root, rows):
+        rows = conn.execute(query, params).fetchall()
+    recordings = [_recording_from_index_row(root, row, include_profile=True) for row in rows]
     return [
         rec
         for rec in recordings
@@ -491,7 +587,14 @@ def load_recordings_for_range(
     try:
         lock = _acquire_refresh_lock(root, _index_has_scanned_dirs(conn))
         if lock is None:
-            return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
+            return _load_indexed_recordings_for_range(
+                conn,
+                root,
+                start_dt,
+                end_dt,
+                camera,
+                refresh_profiles=False,
+            )
         try:
             _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt))
         finally:
@@ -597,7 +700,7 @@ def get_activity_profile(meta_path: Path | None) -> dict[str, list[float]] | Non
 
 def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list[float]] | None]:
     rel = rec.path.relative_to(get_archive_root()).as_posix()
-    profile = get_activity_profile(rec.meta_path)
+    profile = rec.profile if rec.profile_loaded else get_activity_profile(rec.meta_path)
     return {
         'camera': rec.camera,
         'start_utc': rec.start_utc.replace(tzinfo=UTC).isoformat(),
