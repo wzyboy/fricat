@@ -78,14 +78,23 @@ def archive_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_cameras_are_loaded_from_archive(monkeypatch, archive_root: Path) -> None:
-    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+def test_cameras_are_loaded_from_constant() -> None:
     client = TestClient(webapp.app)
 
     response = client.get('/api/cameras')
 
     assert response.status_code == 200
-    assert response.json() == ['CAM1']
+    assert response.json() == ['CAM1', 'CAM2', 'CAM3', 'CAM4']
+
+
+def test_camera_names_can_be_monkeypatched(monkeypatch) -> None:
+    monkeypatch.setattr(webapp, 'CAMERA_NAMES', ['FRONT', 'GARAGE'])
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/cameras')
+
+    assert response.status_code == 200
+    assert response.json() == ['FRONT', 'GARAGE']
 
 
 def test_config_returns_default_timezone() -> None:
@@ -124,11 +133,16 @@ def test_web_index_path_override_is_used(monkeypatch, archive_root: Path, tmp_pa
     monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
 
-    response = client.get('/api/cameras')
+    response = client.get('/api/recordings', params={'start': start, 'end': end})
 
     assert response.status_code == 200
-    assert response.json() == ['CAM1']
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
     assert index_path.is_file()
 
 
@@ -138,11 +152,16 @@ def test_corrupt_web_index_is_recreated(monkeypatch, archive_root: Path, tmp_pat
     monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
 
-    response = client.get('/api/cameras')
+    response = client.get('/api/recordings', params={'start': start, 'end': end})
 
     assert response.status_code == 200
-    assert response.json() == ['CAM1']
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
     assert index_path.is_file()
 
 
@@ -401,6 +420,7 @@ def test_recordings_keep_malformed_profiles_from_crashing(monkeypatch, tmp_path,
 def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
     monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '60')
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
     calls = 0
 
     def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
@@ -418,14 +438,15 @@ def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
     client = TestClient(webapp.app)
 
-    assert client.get('/api/cameras').json() == ['CAMX']
-    assert client.get('/api/cameras').json() == ['CAMX']
+    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
+    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
     assert calls == 1
 
 
 def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
     monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '0')
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
     calls = 0
 
     def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
@@ -443,6 +464,6 @@ def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
     client = TestClient(webapp.app)
 
-    assert client.get('/api/cameras').json() == ['CAM1']
-    assert client.get('/api/cameras').json() == ['CAM2']
+    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
+    assert client.get('/api/recorded_dates').json() == ['2026-03-24']
     assert calls == 2

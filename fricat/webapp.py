@@ -30,6 +30,7 @@ LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 INDEX_SCHEMA_VERSION = 3
 RECENT_ARCHIVE_DAYS = 2
+CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
 
 
 @dataclass(frozen=True)
@@ -708,11 +709,6 @@ def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list
     }
 
 
-def _camera_names(root: Path) -> list[str]:
-    recordings = get_cached_recordings(root)
-    return sorted({rec.camera for rec in recordings})
-
-
 def _recorded_date_strings(root: Path, camera: str | None) -> list[str]:
     recordings = get_cached_recordings(root)
     archive_tz = get_archive_tz()
@@ -771,9 +767,7 @@ async def config() -> JSONResponse:
 
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
-    root = get_archive_root()
-    cameras = await run_in_threadpool(_camera_names, root)
-    return JSONResponse(content=cameras)
+    return JSONResponse(content=list(CAMERA_NAMES))
 
 
 @app.get('/api/recorded_dates')
