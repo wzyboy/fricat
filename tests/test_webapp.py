@@ -1,11 +1,20 @@
 import json
+from collections.abc import Generator
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from fricat import webapp
+
+
+@pytest.fixture(autouse=True)
+def clear_scan_cache() -> Generator[None]:
+    webapp.clear_scan_cache()
+    yield
+    webapp.clear_scan_cache()
 
 
 def archive_root() -> Path:
@@ -94,3 +103,53 @@ def test_sound_profile_averaging_starts_at_zero(tmp_path) -> None:
 
     assert profile is not None
     assert profile['sound'][0] == 50.0
+
+
+def test_archive_scan_is_cached_within_ttl(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
+    monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '60')
+    calls = 0
+
+    def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
+        nonlocal calls
+        calls += 1
+        return [
+            webapp.Recording(
+                camera='CAMX',
+                start_utc=datetime(2026, 3, 24, tzinfo=UTC),
+                path=root / '2026-03-24' / '00_CAMX.mkv',
+                meta_path=None,
+            )
+        ]
+
+    monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
+    client = TestClient(webapp.app)
+
+    assert client.get('/api/cameras').json() == ['CAMX']
+    assert client.get('/api/cameras').json() == ['CAMX']
+    assert calls == 1
+
+
+def test_archive_scan_cache_can_be_disabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
+    monkeypatch.setenv('FRICAT_SCAN_CACHE_TTL_SECONDS', '0')
+    calls = 0
+
+    def fake_scan_recordings(root: Path) -> list[webapp.Recording]:
+        nonlocal calls
+        calls += 1
+        return [
+            webapp.Recording(
+                camera=f'CAM{calls}',
+                start_utc=datetime(2026, 3, 24, tzinfo=UTC),
+                path=root / '2026-03-24' / f'00_CAM{calls}.mkv',
+                meta_path=None,
+            )
+        ]
+
+    monkeypatch.setattr(webapp, 'scan_recordings', fake_scan_recordings)
+    client = TestClient(webapp.app)
+
+    assert client.get('/api/cameras').json() == ['CAM1']
+    assert client.get('/api/cameras').json() == ['CAM2']
+    assert calls == 2

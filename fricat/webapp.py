@@ -5,6 +5,7 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
+from time import monotonic
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -28,11 +29,23 @@ class Recording:
     path: Path
     meta_path: Path | None
 
+
+_SCAN_CACHE: dict[Path, tuple[float, list[Recording]]] = {}
+
+
 def get_archive_root() -> Path:
     root = os.environ.get('FRICAT_ARCHIVE_ROOT')
     if not root:
         raise RuntimeError('FRICAT_ARCHIVE_ROOT is not set')
     return Path(root).resolve()
+
+
+def get_scan_cache_ttl() -> float:
+    raw_ttl = os.environ.get('FRICAT_SCAN_CACHE_TTL_SECONDS', '5')
+    try:
+        return max(0.0, float(raw_ttl))
+    except ValueError:
+        return 5.0
 
 
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
@@ -63,6 +76,27 @@ def scan_recordings(root: Path) -> list[Recording]:
             )
         )
     recordings.sort(key=lambda rec: (rec.start_utc, rec.camera))
+    return recordings
+
+
+def clear_scan_cache() -> None:
+    _SCAN_CACHE.clear()
+
+
+def get_cached_recordings(root: Path) -> list[Recording]:
+    ttl = get_scan_cache_ttl()
+    if ttl == 0:
+        return scan_recordings(root)
+
+    now = monotonic()
+    cached = _SCAN_CACHE.get(root)
+    if cached:
+        cached_at, recordings = cached
+        if now - cached_at < ttl:
+            return recordings
+
+    recordings = scan_recordings(root)
+    _SCAN_CACHE[root] = (now, recordings)
     return recordings
 
 
@@ -150,7 +184,7 @@ async def index() -> FileResponse:
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
     root = get_archive_root()
-    recordings = scan_recordings(root)
+    recordings = get_cached_recordings(root)
     cameras = sorted({rec.camera for rec in recordings})
     return JSONResponse(content=cameras)
 
@@ -158,7 +192,7 @@ async def cameras() -> JSONResponse:
 @app.get('/api/recorded_dates')
 async def recorded_dates(camera: str | None = None) -> JSONResponse:
     root = get_archive_root()
-    recordings = scan_recordings(root)
+    recordings = get_cached_recordings(root)
     dates = set()
     for rec in recordings:
         if camera and rec.camera != camera:
@@ -173,7 +207,7 @@ async def recordings(start: float, end: float, camera: str | None = None) -> JSO
     if start >= end:
         raise HTTPException(status_code=400, detail='start must be less than end')
     root = get_archive_root()
-    recordings = scan_recordings(root)
+    recordings = get_cached_recordings(root)
     start_dt = datetime.fromtimestamp(start, tz=UTC)
     end_dt = datetime.fromtimestamp(end, tz=UTC)
 
