@@ -4,8 +4,10 @@
 
 class FricatApp {
     constructor() {
+        const defaultTimezone = 'America/Vancouver';
         this.state = {
-            currentDate: document.getElementById('date-picker')?.value || this.getTodayDateString(),
+            timezone: defaultTimezone,
+            currentDate: document.getElementById('date-picker')?.value || this.getTodayDateString(defaultTimezone),
             currentCamera: null,
             currentHour: null,
             recordings: [],
@@ -20,6 +22,7 @@ class FricatApp {
         this.elements = {
             video: document.getElementById('main-video'),
             datePicker: document.getElementById('date-picker'),
+            timezoneLabel: document.getElementById('timezone-label'),
             currentDateLabel: document.getElementById('current-date-label'),
             hourList: document.getElementById('hour-list'),
             videoTimestamp: document.getElementById('video-timestamp'),
@@ -37,6 +40,7 @@ class FricatApp {
     }
 
     async init() {
+        await this.loadConfig();
         await this.loadCameras();
         this.bindEvents();
         this.initCalendar();
@@ -104,6 +108,27 @@ class FricatApp {
         };
     }
 
+    async loadConfig() {
+        try {
+            const res = await fetch('/api/config');
+            if (res.ok) {
+                const data = await res.json();
+                if (typeof data.timezone === 'string' && data.timezone) {
+                    this.state.timezone = data.timezone;
+                }
+            }
+        } catch (err) {
+            console.error('Failed to load config', err);
+        }
+        this.updateTimezoneLabel();
+    }
+
+    updateTimezoneLabel() {
+        if (this.elements.timezoneLabel) {
+            this.elements.timezoneLabel.textContent = this.state.timezone;
+        }
+    }
+
     async loadCameras() {
         if (!this.elements.cameraSelector) return;
 
@@ -136,9 +161,9 @@ class FricatApp {
         }
     }
 
-    getLocalParts(date) {
+    getLocalParts(date, timeZone = this.state.timezone) {
         const formatter = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'America/Vancouver',
+            timeZone,
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -155,8 +180,8 @@ class FricatApp {
         return p;
     }
 
-    getTodayDateString() {
-        const parts = this.getLocalParts(new Date());
+    getTodayDateString(timeZone = this.state.timezone) {
+        const parts = this.getLocalParts(new Date(), timeZone);
         return `${parts.year}-${parts.month}-${parts.day}`;
     }
 
@@ -293,7 +318,7 @@ class FricatApp {
             const res = await fetch(`/api/recordings?start=${queryStart}&end=${queryEnd}&camera=${this.state.currentCamera}`);
             const allRecordings = await res.json();
             
-            // Filter recordings whose start time in local Vancouver time is on the current date
+            // Filter recordings whose start time in the archive timezone is on the current date
             this.state.recordings = allRecordings.filter(r => {
                 const lp = this.getLocalParts(r.start_utc);
                 const localDateStr = `${lp.year}-${lp.month}-${lp.day}`;

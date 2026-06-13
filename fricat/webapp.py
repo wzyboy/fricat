@@ -19,7 +19,7 @@ from fricat.utils import parse_recording_path
 # Legacy files were using local time in filenames, while newer files are using
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
-LEGACY_FILENAME_TZ = ZoneInfo('America/Vancouver')
+DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,14 @@ def get_archive_root() -> Path:
     return Path(root).resolve()
 
 
+def get_archive_timezone_name() -> str:
+    return os.environ.get('FRICAT_TIMEZONE', DEFAULT_ARCHIVE_TIMEZONE)
+
+
+def get_archive_tz() -> ZoneInfo:
+    return ZoneInfo(get_archive_timezone_name())
+
+
 def get_scan_cache_ttl() -> float:
     raw_ttl = os.environ.get('FRICAT_SCAN_CACHE_TTL_SECONDS', '5')
     try:
@@ -51,7 +59,7 @@ def get_scan_cache_ttl() -> float:
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
     filename_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00')
     if filename_dt < LEGACY_FILENAME_CUTOFF:
-        return filename_dt.replace(tzinfo=LEGACY_FILENAME_TZ).astimezone(UTC)
+        return filename_dt.replace(tzinfo=get_archive_tz()).astimezone(UTC)
     return filename_dt.replace(tzinfo=UTC)
 
 
@@ -181,6 +189,12 @@ async def index() -> FileResponse:
     return FileResponse(index_path)
 
 
+@app.get('/api/config')
+async def config() -> JSONResponse:
+    get_archive_tz()
+    return JSONResponse(content={'timezone': get_archive_timezone_name()})
+
+
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
     root = get_archive_root()
@@ -193,11 +207,12 @@ async def cameras() -> JSONResponse:
 async def recorded_dates(camera: str | None = None) -> JSONResponse:
     root = get_archive_root()
     recordings = get_cached_recordings(root)
+    archive_tz = get_archive_tz()
     dates = set()
     for rec in recordings:
         if camera and rec.camera != camera:
             continue
-        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(LEGACY_FILENAME_TZ)
+        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
         dates.add(local_dt.strftime('%Y-%m-%d'))
     return JSONResponse(content=sorted(list(dates)))
 

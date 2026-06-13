@@ -11,7 +11,9 @@ from fricat import webapp
 
 
 @pytest.fixture(autouse=True)
-def clear_scan_cache() -> Generator[None]:
+def clear_scan_cache(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
+    monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
     webapp.clear_scan_cache()
     yield
     webapp.clear_scan_cache()
@@ -31,12 +33,49 @@ def test_cameras_are_loaded_from_archive(monkeypatch) -> None:
     assert response.json() == ['CAM1']
 
 
+def test_config_returns_default_timezone() -> None:
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/config')
+
+    assert response.status_code == 200
+    assert response.json() == {'timezone': 'America/Vancouver'}
+
+
+def test_config_returns_timezone_override(monkeypatch) -> None:
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/config')
+
+    assert response.status_code == 200
+    assert response.json() == {'timezone': 'UTC'}
+
+
 def test_recorded_dates_are_returned_for_camera(monkeypatch) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root()))
     client = TestClient(webapp.app)
 
     response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
 
+    assert response.status_code == 200
+    assert response.json() == ['2026-03-24']
+
+
+def test_recorded_dates_use_archive_timezone(monkeypatch, tmp_path) -> None:
+    day_dir = tmp_path / '2026-03-24'
+    day_dir.mkdir()
+    (day_dir / '00_CAM1.mkv').write_bytes(b'')
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(tmp_path))
+    client = TestClient(webapp.app)
+
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'America/Vancouver')
+    response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
+    assert response.status_code == 200
+    assert response.json() == ['2026-03-23']
+
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
+    response = client.get('/api/recorded_dates', params={'camera': 'CAM1'})
     assert response.status_code == 200
     assert response.json() == ['2026-03-24']
 
