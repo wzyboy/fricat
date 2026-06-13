@@ -381,10 +381,10 @@ class FricatApp {
     async loadRecording(recording) {
         this.state.currentHour = recording;
         this.elements.video.src = `/media/${recording.path}`;
-        this.elements.video.play();
-        this.state.isPlaying = true;
+        this.state.isPlaying = false;
         this.updateUI();
         this.renderHourList();
+        this.playVideo();
 
         // Load Activity Meta
         if (recording.has_meta) {
@@ -392,6 +392,17 @@ class FricatApp {
         } else {
             this.clearActivity();
         }
+    }
+
+    async playVideo() {
+        try {
+            await this.elements.video.play();
+            this.state.isPlaying = true;
+        } catch (err) {
+            console.warn('Playback failed', err);
+            this.state.isPlaying = false;
+        }
+        this.updateUI();
     }
 
     async loadActivity(path) {
@@ -487,16 +498,15 @@ class FricatApp {
         }
     }
 
-    togglePlay() {
+    async togglePlay() {
         const v = this.elements.video;
         if (v.paused) {
-            v.play();
-            this.state.isPlaying = true;
+            await this.playVideo();
         } else {
             v.pause();
             this.state.isPlaying = false;
+            this.updateUI();
         }
-        this.updateUI();
     }
 
     seek(seconds) {
@@ -542,6 +552,8 @@ class FricatApp {
     clearVideo() {
         this.elements.video.src = '';
         this.elements.videoTimestamp.textContent = '--:--:--';
+        this.state.isPlaying = false;
+        this.updateUI();
         this.clearActivity();
     }
 
