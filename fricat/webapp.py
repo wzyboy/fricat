@@ -3,6 +3,7 @@ import json
 import sqlite3
 import hashlib
 import logging
+from threading import Lock
 from time import time
 from time import monotonic
 from pathlib import Path
@@ -12,6 +13,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 from dataclasses import dataclass
 
+import anyio
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
@@ -39,6 +41,8 @@ class Recording:
 
 
 _SCAN_CACHE: dict[Path, tuple[float, list[Recording]]] = {}
+_REFRESH_LOCKS: dict[Path, Lock] = {}
+_REFRESH_LOCKS_LOCK = Lock()
 
 
 def get_archive_root() -> Path:
@@ -70,6 +74,15 @@ def get_recording_index_path(root: Path) -> Path:
         return Path(override).expanduser()
     root_hash = hashlib.sha256(str(root).encode('utf-8')).hexdigest()[:16]
     return Path.home() / '.cache' / 'fricat' / f'{root_hash}.sqlite'
+
+
+def _refresh_lock(root: Path) -> Lock:
+    with _REFRESH_LOCKS_LOCK:
+        lock = _REFRESH_LOCKS.get(root)
+        if lock is None:
+            lock = Lock()
+            _REFRESH_LOCKS[root] = lock
+        return lock
 
 
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
@@ -310,6 +323,16 @@ def _index_has_scanned_dirs(conn: sqlite3.Connection) -> bool:
     return count > 0
 
 
+def _acquire_refresh_lock(root: Path, stale_available: bool) -> Lock | None:
+    lock = _refresh_lock(root)
+    if lock.acquire(blocking=False):
+        return lock
+    if stale_available:
+        return None
+    lock.acquire()
+    return lock
+
+
 def _all_archive_date_strs(root: Path) -> list[str]:
     return [day_dir.name for day_dir in _iter_archive_day_dirs(root)]
 
@@ -430,13 +453,19 @@ def load_recordings(root: Path) -> list[Recording]:
         return scan_recordings(root)
 
     try:
-        if _index_has_scanned_dirs(conn):
-            _refresh_index_days(conn, root, _recent_archive_date_strs(root))
-        else:
-            date_strs = _all_archive_date_strs(root)
-            if not date_strs:
-                return scan_recordings(root)
-            _refresh_index_days(conn, root, date_strs, force=True)
+        lock = _acquire_refresh_lock(root, _index_has_scanned_dirs(conn))
+        if lock is None:
+            return _load_indexed_recordings(conn, root)
+        try:
+            if _index_has_scanned_dirs(conn):
+                _refresh_index_days(conn, root, _recent_archive_date_strs(root))
+            else:
+                date_strs = _all_archive_date_strs(root)
+                if not date_strs:
+                    return scan_recordings(root)
+                _refresh_index_days(conn, root, date_strs, force=True)
+        finally:
+            lock.release()
         recordings = _load_indexed_recordings(conn, root)
         return recordings
     finally:
@@ -460,7 +489,13 @@ def load_recordings_for_range(
         ]
 
     try:
-        _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt))
+        lock = _acquire_refresh_lock(root, _index_has_scanned_dirs(conn))
+        if lock is None:
+            return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
+        try:
+            _refresh_index_days(conn, root, _range_archive_date_strs(start_dt, end_dt))
+        finally:
+            lock.release()
         return _load_indexed_recordings_for_range(conn, root, start_dt, end_dt, camera)
     finally:
         conn.close()
@@ -572,6 +607,49 @@ def serialize_recording(rec: Recording) -> dict[str, str | bool | dict[str, list
     }
 
 
+def _camera_names(root: Path) -> list[str]:
+    recordings = get_cached_recordings(root)
+    return sorted({rec.camera for rec in recordings})
+
+
+def _recorded_date_strings(root: Path, camera: str | None) -> list[str]:
+    recordings = get_cached_recordings(root)
+    archive_tz = get_archive_tz()
+    dates = set()
+    for rec in recordings:
+        if camera and rec.camera != camera:
+            continue
+        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
+        dates.add(local_dt.strftime('%Y-%m-%d'))
+    return sorted(list(dates))
+
+
+def _serialized_recordings_for_range(
+    root: Path,
+    start_dt: datetime,
+    end_dt: datetime,
+    camera: str | None,
+) -> list[dict[str, str | bool | dict[str, list[float]] | None]]:
+    recordings = load_recordings_for_range(root, start_dt, end_dt, camera)
+    return [serialize_recording(rec) for rec in recordings]
+
+
+def _read_sidecar(path: str) -> object:
+    root = get_archive_root()
+    file_path = (root / path).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail='File not found')
+    sidecar_path = file_path.with_suffix('.json')
+    if not sidecar_path.is_file():
+        raise HTTPException(status_code=404, detail='Sidecar not found')
+    try:
+        return json.loads(sidecar_path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
+
+
 app = FastAPI(title='fricat archive')
 
 static_dir = Path(__file__).resolve().parent / 'static'
@@ -593,23 +671,15 @@ async def config() -> JSONResponse:
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
     root = get_archive_root()
-    recordings = get_cached_recordings(root)
-    cameras = sorted({rec.camera for rec in recordings})
+    cameras = await anyio.to_thread.run_sync(_camera_names, root)
     return JSONResponse(content=cameras)
 
 
 @app.get('/api/recorded_dates')
 async def recorded_dates(camera: str | None = None) -> JSONResponse:
     root = get_archive_root()
-    recordings = get_cached_recordings(root)
-    archive_tz = get_archive_tz()
-    dates = set()
-    for rec in recordings:
-        if camera and rec.camera != camera:
-            continue
-        local_dt = rec.start_utc.replace(tzinfo=UTC).astimezone(archive_tz)
-        dates.add(local_dt.strftime('%Y-%m-%d'))
-    return JSONResponse(content=sorted(list(dates)))
+    dates = await anyio.to_thread.run_sync(_recorded_date_strings, root, camera)
+    return JSONResponse(content=dates)
 
 
 @app.get('/api/recordings')
@@ -619,11 +689,13 @@ async def recordings(start: float, end: float, camera: str | None = None) -> JSO
     root = get_archive_root()
     start_dt = datetime.fromtimestamp(start, tz=UTC)
     end_dt = datetime.fromtimestamp(end, tz=UTC)
-    recordings = load_recordings_for_range(root, start_dt, end_dt, camera)
-
-    filtered: list[dict[str, str | bool | dict[str, list[float]] | None]] = []
-    for rec in recordings:
-        filtered.append(serialize_recording(rec))
+    filtered = await anyio.to_thread.run_sync(
+        _serialized_recordings_for_range,
+        root,
+        start_dt,
+        end_dt,
+        camera,
+    )
 
     return JSONResponse(content=filtered)
 
@@ -643,17 +715,5 @@ async def media(path: str) -> FileResponse:
 
 @app.get('/api/meta')
 async def meta(path: str) -> JSONResponse:
-    root = get_archive_root()
-    file_path = (root / path).resolve()
-    try:
-        file_path.relative_to(root)
-    except ValueError:
-        raise HTTPException(status_code=404, detail='File not found')
-    sidecar_path = file_path.with_suffix('.json')
-    if not sidecar_path.is_file():
-        raise HTTPException(status_code=404, detail='Sidecar not found')
-    try:
-        data = json.loads(sidecar_path.read_text(encoding='utf-8'))
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
+    data = await anyio.to_thread.run_sync(_read_sidecar, path)
     return JSONResponse(content=data)

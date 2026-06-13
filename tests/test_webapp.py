@@ -222,6 +222,35 @@ def test_recordings_refresh_when_hour_is_added(monkeypatch, archive_root: Path) 
     ]
 
 
+def test_recordings_serve_stale_index_while_refresh_is_locked(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+    start = datetime(2026, 3, 24, tzinfo=UTC).timestamp()
+    end = datetime(2026, 3, 25, tzinfo=UTC).timestamp()
+
+    response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
+
+    day_dir = archive_root / '2026-03-24'
+    old_mtime_ns = day_dir.stat().st_mtime_ns
+    (day_dir / '21_CAM1.mkv').write_bytes(b'test-media')
+    os.utime(day_dir, ns=(old_mtime_ns + 1_000_000_000, old_mtime_ns + 1_000_000_000))
+    lock = webapp._refresh_lock(archive_root.resolve())
+    assert lock.acquire(blocking=False)
+    try:
+        response = client.get('/api/recordings', params={'start': start, 'end': end, 'camera': 'CAM1'})
+    finally:
+        lock.release()
+
+    assert [rec['path'] for rec in response.json()] == [
+        '2026-03-24/22_CAM1.mkv',
+        '2026-03-24/23_CAM1.mkv',
+    ]
+
+
 def test_recorded_dates_refresh_recent_new_day(monkeypatch, archive_root: Path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
     monkeypatch.setenv('FRICAT_TIMEZONE', 'UTC')
