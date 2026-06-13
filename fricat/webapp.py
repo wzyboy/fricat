@@ -1,5 +1,7 @@
 import os
 import json
+import sqlite3
+import hashlib
 import logging
 from time import monotonic
 from pathlib import Path
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
+INDEX_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -59,11 +62,29 @@ def get_scan_cache_ttl() -> float:
         return 5.0
 
 
+def get_recording_index_path(root: Path) -> Path:
+    override = os.environ.get('FRICAT_WEB_INDEX_PATH')
+    if override:
+        return Path(override).expanduser()
+    root_hash = hashlib.sha256(str(root).encode('utf-8')).hexdigest()[:16]
+    return Path.home() / '.cache' / 'fricat' / f'{root_hash}.sqlite'
+
+
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
     filename_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00')
     if filename_dt < LEGACY_FILENAME_CUTOFF:
         return filename_dt.replace(tzinfo=get_archive_tz()).astimezone(UTC)
     return filename_dt.replace(tzinfo=UTC)
+
+
+def _recording_from_index_row(root: Path, row: sqlite3.Row) -> Recording:
+    meta_rel_path = row['meta_rel_path']
+    return Recording(
+        camera=row['camera'],
+        start_utc=datetime.fromtimestamp(row['start_ts'], tz=UTC),
+        path=root / row['rel_path'],
+        meta_path=(root / meta_rel_path) if meta_rel_path else None,
+    )
 
 
 def scan_recordings(root: Path) -> list[Recording]:
@@ -90,6 +111,154 @@ def scan_recordings(root: Path) -> list[Recording]:
     return recordings
 
 
+def _create_recording_index_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        f'''
+        drop table if exists recordings;
+
+        create table recordings (
+            rel_path text primary key,
+            camera text not null,
+            start_ts real not null,
+            date_str text not null,
+            hour_str text not null,
+            media_mtime_ns integer not null,
+            media_size integer not null,
+            meta_rel_path text,
+            meta_mtime_ns integer,
+            meta_size integer
+        );
+
+        create index recordings_start_idx on recordings(start_ts);
+        create index recordings_camera_idx on recordings(camera);
+
+        pragma user_version = {INDEX_SCHEMA_VERSION};
+        '''
+    )
+
+
+def _ensure_recording_index_schema(conn: sqlite3.Connection) -> None:
+    version = conn.execute('pragma user_version').fetchone()[0]
+    if version != INDEX_SCHEMA_VERSION:
+        _create_recording_index_schema(conn)
+
+
+def _connect_recording_index(root: Path) -> sqlite3.Connection | None:
+    index_path = get_recording_index_path(root)
+    try:
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as err:
+        logger.warning('Failed to create recording index directory %s: %s', index_path.parent, err)
+        return None
+
+    conn = None
+    try:
+        conn = sqlite3.connect(index_path)
+        conn.row_factory = sqlite3.Row
+        _ensure_recording_index_schema(conn)
+        return conn
+    except sqlite3.DatabaseError as err:
+        logger.warning('Failed to open recording index %s: %s', index_path, err)
+        if conn is not None:
+            conn.close()
+
+    try:
+        index_path.unlink(missing_ok=True)
+        conn = sqlite3.connect(index_path)
+        conn.row_factory = sqlite3.Row
+        _ensure_recording_index_schema(conn)
+        return conn
+    except (OSError, sqlite3.DatabaseError) as err:
+        logger.warning('Failed to recreate recording index %s: %s', index_path, err)
+        return None
+
+
+def _recording_index_rows(root: Path, recordings: list[Recording]) -> list[tuple[object, ...]]:
+    rows = []
+    for rec in recordings:
+        try:
+            parsed = parse_recording_path(root, rec.path)
+            if not parsed:
+                continue
+            date_str, hour_str, _ = parsed
+            media_stat = rec.path.stat()
+            rel_path = rec.path.relative_to(root).as_posix()
+        except (OSError, ValueError):
+            continue
+        meta_rel_path = None
+        meta_mtime_ns = None
+        meta_size = None
+        if rec.meta_path:
+            try:
+                meta_stat = rec.meta_path.stat()
+                meta_rel_path = rec.meta_path.relative_to(root).as_posix()
+            except (OSError, ValueError):
+                pass
+            else:
+                meta_mtime_ns = meta_stat.st_mtime_ns
+                meta_size = meta_stat.st_size
+
+        rows.append(
+            (
+                rel_path,
+                rec.camera,
+                rec.start_utc.timestamp(),
+                date_str,
+                hour_str,
+                media_stat.st_mtime_ns,
+                media_stat.st_size,
+                meta_rel_path,
+                meta_mtime_ns,
+                meta_size,
+            )
+        )
+    return rows
+
+
+def _replace_recording_index(conn: sqlite3.Connection, root: Path, recordings: list[Recording]) -> None:
+    rows = _recording_index_rows(root, recordings)
+    with conn:
+        conn.execute('delete from recordings')
+        conn.executemany(
+            '''
+            insert into recordings (
+                rel_path, camera, start_ts, date_str, hour_str, media_mtime_ns,
+                media_size, meta_rel_path, meta_mtime_ns, meta_size
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            rows,
+        )
+
+
+def _load_indexed_recordings(conn: sqlite3.Connection, root: Path) -> list[Recording]:
+    rows = conn.execute(
+        '''
+        select rel_path, camera, start_ts, meta_rel_path
+        from recordings
+        order by start_ts, camera
+        '''
+    ).fetchall()
+    return [_recording_from_index_row(root, row) for row in rows]
+
+
+def load_recordings(root: Path) -> list[Recording]:
+    conn = _connect_recording_index(root)
+    if conn is None:
+        return scan_recordings(root)
+
+    try:
+        with conn:
+            recordings = _load_indexed_recordings(conn, root)
+            if recordings:
+                return recordings
+
+            recordings = scan_recordings(root)
+            _replace_recording_index(conn, root, recordings)
+            return recordings
+    finally:
+        conn.close()
+
+
 def clear_scan_cache() -> None:
     _SCAN_CACHE.clear()
 
@@ -106,7 +275,7 @@ def get_cached_recordings(root: Path) -> list[Recording]:
         if now - cached_at < ttl:
             return recordings
 
-    recordings = scan_recordings(root)
+    recordings = load_recordings(root)
     _SCAN_CACHE[root] = (now, recordings)
     return recordings
 

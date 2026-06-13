@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 from pathlib import Path
 from datetime import UTC
@@ -13,10 +14,10 @@ from fricat import webapp
 
 
 @pytest.fixture(autouse=True)
-def clear_scan_cache(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+def clear_scan_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generator[None]:
     monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
     monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
-    monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
+    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(tmp_path / 'web-index.sqlite'))
     webapp.clear_scan_cache()
     yield
     webapp.clear_scan_cache()
@@ -103,6 +104,45 @@ def test_config_returns_timezone_override(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json() == {'timezone': 'UTC'}
+
+
+def test_recording_index_path_defaults_to_cache_root_hash(monkeypatch, tmp_path) -> None:
+    home = tmp_path / 'home'
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
+    root = Path('/archive/root')
+    root_hash = hashlib.sha256(str(root).encode('utf-8')).hexdigest()[:16]
+
+    index_path = webapp.get_recording_index_path(root)
+
+    assert index_path == home / '.cache' / 'fricat' / f'{root_hash}.sqlite'
+
+
+def test_web_index_path_override_is_used(monkeypatch, archive_root: Path, tmp_path: Path) -> None:
+    index_path = tmp_path / 'custom-web-index.sqlite'
+    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/cameras')
+
+    assert response.status_code == 200
+    assert response.json() == ['CAM1']
+    assert index_path.is_file()
+
+
+def test_corrupt_web_index_is_recreated(monkeypatch, archive_root: Path, tmp_path: Path) -> None:
+    index_path = tmp_path / 'corrupt-web-index.sqlite'
+    index_path.write_bytes(b'not sqlite')
+    monkeypatch.setenv('FRICAT_WEB_INDEX_PATH', str(index_path))
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/cameras')
+
+    assert response.status_code == 200
+    assert response.json() == ['CAM1']
+    assert index_path.is_file()
 
 
 def test_recorded_dates_are_returned_for_camera(monkeypatch, archive_root: Path) -> None:
