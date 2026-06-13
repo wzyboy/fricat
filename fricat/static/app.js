@@ -5,7 +5,7 @@
 class FricatApp {
     constructor() {
         this.state = {
-            currentDate: document.getElementById('date-picker')?.value || new Date().toISOString().split('T')[0],
+            currentDate: document.getElementById('date-picker')?.value || this.getTodayDateString(),
             currentCamera: null,
             currentHour: null,
             recordings: [],
@@ -41,6 +41,7 @@ class FricatApp {
         this.bindEvents();
         this.initCalendar();
         await this.loadRecordedDates();
+        this.initializeCurrentDate();
         await this.loadDay();
         this.renderCalendar();
         this.updateUI();
@@ -152,6 +153,18 @@ class FricatApp {
             p[part.type] = part.value;
         }
         return p;
+    }
+
+    getTodayDateString() {
+        const parts = this.getLocalParts(new Date());
+        return `${parts.year}-${parts.month}-${parts.day}`;
+    }
+
+    initializeCurrentDate() {
+        const latestRecordedDate = this.recordedDates.at(-1);
+        this.state.currentDate = latestRecordedDate || this.getTodayDateString();
+        this.elements.datePicker.value = this.state.currentDate;
+        this.calendarDate = new Date(this.state.currentDate);
     }
 
     async loadRecordedDates() {
