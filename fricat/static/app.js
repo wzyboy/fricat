@@ -407,7 +407,7 @@ class FricatApp {
 
     async loadActivity(path) {
         try {
-            const res = await fetch(`/api/meta?path=${path}`);
+            const res = await fetch(`/api/meta?path=${encodeURIComponent(path)}`);
             const data = await res.json();
             this.drawActivity(data);
         } catch (e) {
