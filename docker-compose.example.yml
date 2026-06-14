@@ -1,0 +1,10 @@
+services:
+  fricat-web:
+    image: ghcr.io/wzyboy/fricat-web:master
+    restart: unless-stopped
+    ports:
+      - '8000:8000'
+    environment:
+      FRICAT_TIMEZONE: 'America/Vancouver'
+    volumes:
+      - '/media/frigate:/archive:ro'
