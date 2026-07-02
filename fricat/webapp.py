@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # UTC time in filenames.
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
-CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4']
+CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
 
 
 @dataclass(frozen=True)
