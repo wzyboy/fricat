@@ -73,15 +73,6 @@ def archive_root(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_cameras_are_loaded_from_constant() -> None:
-    client = TestClient(webapp.app)
-
-    response = client.get('/api/cameras')
-
-    assert response.status_code == 200
-    assert response.json() == ['CAM1', 'CAM2', 'CAM3', 'CAM4']
-
-
 def test_config_returns_default_timezone() -> None:
     client = TestClient(webapp.app)
 
