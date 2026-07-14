@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import subprocess
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -306,6 +307,144 @@ def test_media_accepts_encoded_reserved_path_segments(monkeypatch, tmp_path) -> 
 
     assert response.status_code == 200
     assert response.content == media_body
+
+
+def test_clip_export_stream_copies_mp4_and_cleans_up(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    monkeypatch.setenv('FRICAT_TIMEZONE', 'America/Vancouver')
+    commands: list[list[str]] = []
+    output_dirs: list[Path] = []
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        output_path = Path(command[-1])
+        output_dirs.append(output_path.parent)
+        output_path.write_bytes(b'clip-data')
+        return subprocess.CompletedProcess(command, 0, '', '')
+
+    monkeypatch.setattr(webapp.subprocess, 'run', fake_run)
+    client = TestClient(webapp.app)
+
+    response = client.post(
+        '/api/clip',
+        json={'path': '2026-03-24/22_CAM1.mkv', 'start': 61.9, 'end': 125.1},
+    )
+
+    assert response.status_code == 200
+    assert response.content == b'clip-data'
+    assert response.headers['content-type'] == 'video/mp4'
+    assert response.headers['content-disposition'] == (
+        'attachment; filename="2026-03-24_15-01-01_to_15-02-05.mp4"'
+    )
+    command = commands[0]
+    assert command[command.index('-ss') + 1] == '61.9'
+    assert command[command.index('-t') + 1] == str(125.1 - 61.9)
+    assert command[command.index('-map') + 1] == '0:v:0'
+    assert command[command.index('-c') + 1] == 'copy'
+    assert command[command.index('-movflags') + 1] == '+faststart'
+    assert all(not output_dir.exists() for output_dir in output_dirs)
+
+
+@pytest.mark.parametrize(
+    ('start', 'end'),
+    [
+        (-1, 1),
+        (1, 1),
+        (2, 1),
+        (0, 3600.1),
+        ('nan', 1),
+        (0, 'inf'),
+    ],
+)
+def test_clip_export_rejects_invalid_ranges(
+    monkeypatch,
+    archive_root: Path,
+    start: float | str,
+    end: float | str,
+) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+
+    response = client.post(
+        '/api/clip',
+        json={'path': '2026-03-24/22_CAM1.mkv', 'start': start, 'end': end},
+    )
+
+    assert response.status_code == 400
+
+
+def test_clip_export_accepts_full_hour_boundary(monkeypatch, archive_root: Path) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        Path(command[-1]).write_bytes(b'clip-data')
+        return subprocess.CompletedProcess(command, 0, '', '')
+
+    monkeypatch.setattr(webapp.subprocess, 'run', fake_run)
+    client = TestClient(webapp.app)
+
+    response = client.post(
+        '/api/clip',
+        json={'path': '2026-03-24/22_CAM1.mkv', 'start': 0, 'end': 3600},
+    )
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ('path', 'status_code'),
+    [
+        ('../outside.mkv', 400),
+        ('2026-03-24/not-an-hour.mkv', 400),
+        ('2026-03-24/21_CAM1.mkv', 404),
+    ],
+)
+def test_clip_export_rejects_invalid_or_missing_sources(
+    monkeypatch,
+    archive_root: Path,
+    path: str,
+    status_code: int,
+) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+    client = TestClient(webapp.app)
+
+    response = client.post('/api/clip', json={'path': path, 'start': 0, 'end': 1})
+
+    assert response.status_code == status_code
+
+
+def test_clip_export_handles_ffmpeg_failure(monkeypatch, archive_root: Path, caplog) -> None:
+    monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
+
+    def fail_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, command, stderr='muxing failed')
+
+    monkeypatch.setattr(webapp.subprocess, 'run', fail_run)
+    client = TestClient(webapp.app)
+
+    with caplog.at_level(logging.ERROR, logger='fricat.webapp'):
+        response = client.post(
+            '/api/clip',
+            json={'path': '2026-03-24/22_CAM1.mkv', 'start': 10, 'end': 20},
+        )
+
+    assert response.status_code == 500
+    assert response.json() == {'detail': 'Failed to export clip'}
+    assert 'muxing failed' in caplog.text
+
+
+def test_index_includes_clip_controls() -> None:
+    client = TestClient(webapp.app)
+
+    response = client.get('/')
+
+    assert response.status_code == 200
+    assert 'id="clip-start-btn"' in response.text
+    assert 'id="clip-end-btn"' in response.text
+    assert 'id="clip-export-btn"' in response.text
+    assert 'id="clip-start-marker"' in response.text
+    assert 'id="clip-end-marker"' in response.text
+    assert 'id="clip-range"' in response.text
 
 
 def test_activity_profile_handles_null_audio(archive_root: Path) -> None:

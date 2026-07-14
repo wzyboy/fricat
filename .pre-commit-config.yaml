@@ -6,8 +6,3 @@ repos:
         entry: ruff check --select I --fix
         language: system
         types_or: [python, pyi]
-      - id: ruff-format
-        name: ruff format
-        entry: ruff format
-        language: system
-        types_or: [python, pyi]

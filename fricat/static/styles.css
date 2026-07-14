@@ -276,6 +276,62 @@ canvas.activity-canvas {
     background: var(--primary);
     pointer-events: none;
     box-shadow: 0 0 10px var(--primary-container);
+    z-index: 4;
+}
+
+.clip-range {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(180, 197, 255, 0.12);
+    border-top: 1px solid rgba(180, 197, 255, 0.45);
+    border-bottom: 1px solid rgba(180, 197, 255, 0.45);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.clip-seek-marker {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    pointer-events: none;
+    transform: translateX(-1px);
+    z-index: 3;
+}
+
+.clip-seek-marker span {
+    position: absolute;
+    top: 4px;
+    left: 50%;
+    min-width: 20px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    color: #0e0e0e;
+    font-family: var(--font-data);
+    font-size: 0.625rem;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    transform: translateX(-50%);
+}
+
+.clip-seek-marker-start {
+    background: var(--motion-accent);
+    box-shadow: 0 0 8px rgba(249, 115, 22, 0.75);
+}
+
+.clip-seek-marker-start span {
+    background: var(--motion-accent);
+}
+
+.clip-seek-marker-end {
+    background: var(--sound-accent);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.75);
+}
+
+.clip-seek-marker-end span {
+    background: var(--sound-accent);
 }
 
 /* Controls */
@@ -313,6 +369,11 @@ canvas.activity-canvas {
     background: var(--surface-bright);
 }
 
+.btn-ctrl:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
 .btn-ctrl svg {
     width: 20px;
     height: 20px;
@@ -328,6 +389,33 @@ canvas.activity-canvas {
     font-family: var(--font-data);
     color: var(--on-surface-variant);
     margin-top: 4px;
+}
+
+.clip-controls {
+    min-width: 300px;
+}
+
+.clip-marker-btn.active {
+    background: var(--primary-container);
+    color: white;
+}
+
+.clip-export-btn {
+    width: auto;
+    min-width: 92px;
+    padding: 0 12px;
+    white-space: nowrap;
+}
+
+.clip-status {
+    color: var(--on-surface-variant);
+    font-family: var(--font-data);
+    font-size: 0.625rem;
+    white-space: nowrap;
+}
+
+.clip-status.error {
+    color: #fca5a5;
 }
 
 /* Specific Day/Night Colors for Sidebar Items */
@@ -459,4 +547,3 @@ canvas.activity-canvas {
     background-color: white;
     box-shadow: none;
 }
-

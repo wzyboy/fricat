@@ -12,7 +12,10 @@ class FricatApp {
             currentHour: null,
             recordings: [],
             isPlaying: false,
-            autoplay: true
+            autoplay: true,
+            clipStart: null,
+            clipEnd: null,
+            isExportingClip: false
         };
 
         // Custom calendar state
@@ -31,7 +34,14 @@ class FricatApp {
             motionCanvas: document.getElementById('motion-canvas'),
             soundCanvas: document.getElementById('sound-canvas'),
             seekerLine: document.getElementById('seeker-line'),
+            clipRange: document.getElementById('clip-range'),
+            clipStartMarker: document.getElementById('clip-start-marker'),
+            clipEndMarker: document.getElementById('clip-end-marker'),
             autoplayToggle: document.getElementById('autoplay-toggle'),
+            clipStartBtn: document.getElementById('clip-start-btn'),
+            clipEndBtn: document.getElementById('clip-end-btn'),
+            clipExportBtn: document.getElementById('clip-export-btn'),
+            clipStatus: document.getElementById('clip-status'),
             cameraSelector: document.querySelector('.camera-selector'),
             cameraBtns: []
         };
@@ -93,11 +103,15 @@ class FricatApp {
         this.elements.autoplayToggle.onchange = (e) => this.state.autoplay = e.target.checked;
 
         this.elements.video.ontimeupdate = () => this.onTimeUpdate();
+        this.elements.video.onloadedmetadata = () => this.updateClipMarkers();
         this.elements.video.onended = () => {
             if (this.state.autoplay) this.navigateHour(1);
         };
 
         this.elements.copyTimestampBtn.onclick = () => this.copyTimestamp();
+        this.elements.clipStartBtn.onclick = () => this.markClipStart();
+        this.elements.clipEndBtn.onclick = () => this.markClipEnd();
+        this.elements.clipExportBtn.onclick = () => this.exportClip();
 
         document.getElementById('screenshot-btn').onclick = () => this.takeScreenshot();
         document.getElementById('fullscreen-btn').onclick = () => {
@@ -428,6 +442,7 @@ class FricatApp {
 
     async loadRecording(recording) {
         this.state.currentHour = recording;
+        this.resetClip();
         this.elements.video.src = `/media/${this.encodeMediaPath(recording.path)}`;
         this.state.isPlaying = false;
         this.updateUI();
@@ -596,6 +611,141 @@ class FricatApp {
         link.click();
     }
 
+    markerTime(offset) {
+        if (!this.state.currentHour || offset === null) return '--:--:--';
+        const baseTime = new Date(this.state.currentHour.start_utc);
+        const markerTime = new Date(baseTime.getTime() + offset * 1000);
+        const lp = this.getLocalParts(markerTime);
+        return `${lp.hour}:${lp.minute}:${lp.second}`;
+    }
+
+    markClipStart() {
+        if (!this.state.currentHour || !Number.isFinite(this.elements.video.currentTime)) return;
+        this.state.clipStart = this.elements.video.currentTime;
+        if (this.state.clipEnd !== null && this.state.clipEnd <= this.state.clipStart) {
+            this.state.clipEnd = null;
+        }
+        this.updateClipUI();
+    }
+
+    markClipEnd() {
+        if (this.state.clipStart === null) {
+            this.updateClipUI('Set A before B', true);
+            return;
+        }
+        const end = this.elements.video.currentTime;
+        if (!Number.isFinite(end) || end <= this.state.clipStart) {
+            this.updateClipUI('B must be after A', true);
+            return;
+        }
+        this.state.clipEnd = end;
+        this.updateClipUI();
+    }
+
+    resetClip() {
+        this.state.clipStart = null;
+        this.state.clipEnd = null;
+        this.state.isExportingClip = false;
+        this.updateClipUI();
+    }
+
+    updateClipUI(message = null, isError = false) {
+        const hasRecording = Boolean(this.state.currentHour);
+        const hasRange = this.state.clipStart !== null && this.state.clipEnd !== null
+            && this.state.clipStart < this.state.clipEnd;
+        this.elements.clipStartBtn.disabled = !hasRecording || this.state.isExportingClip;
+        this.elements.clipEndBtn.disabled = !hasRecording || this.state.isExportingClip;
+        this.elements.clipExportBtn.disabled = !hasRange || this.state.isExportingClip;
+        this.elements.clipStartBtn.classList.toggle('active', this.state.clipStart !== null);
+        this.elements.clipEndBtn.classList.toggle('active', this.state.clipEnd !== null);
+        this.elements.clipExportBtn.textContent = this.state.isExportingClip ? 'Exporting…' : 'Export Clip';
+        this.elements.clipStatus.classList.toggle('error', isError);
+        this.elements.clipStatus.textContent = message
+            || `A ${this.markerTime(this.state.clipStart)} · B ${this.markerTime(this.state.clipEnd)}`;
+        this.updateClipMarkers();
+    }
+
+    clipMarkerPercent(offset) {
+        const videoDuration = this.elements.video.duration;
+        const duration = Number.isFinite(videoDuration) && videoDuration > 0 ? videoDuration : 3600;
+        return Math.max(0, Math.min(100, (offset / duration) * 100));
+    }
+
+    updateClipMarkers() {
+        const start = this.state.clipStart;
+        const end = this.state.clipEnd;
+        const hasStart = start !== null;
+        const hasEnd = end !== null;
+        this.elements.clipStartMarker.hidden = !hasStart;
+        this.elements.clipEndMarker.hidden = !hasEnd;
+        this.elements.clipRange.hidden = !hasStart || !hasEnd;
+
+        if (hasStart) {
+            this.elements.clipStartMarker.style.left = `${this.clipMarkerPercent(start)}%`;
+        }
+        if (hasEnd) {
+            this.elements.clipEndMarker.style.left = `${this.clipMarkerPercent(end)}%`;
+        }
+        if (hasStart && hasEnd) {
+            const startPercent = this.clipMarkerPercent(start);
+            const endPercent = this.clipMarkerPercent(end);
+            this.elements.clipRange.style.left = `${startPercent}%`;
+            this.elements.clipRange.style.width = `${endPercent - startPercent}%`;
+        }
+    }
+
+    downloadFilename(response) {
+        const disposition = response.headers.get('content-disposition') || '';
+        const encodedMatch = disposition.match(/filename\*=utf-8''([^;]+)/i);
+        if (encodedMatch) return decodeURIComponent(encodedMatch[1]);
+        const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+        return plainMatch ? plainMatch[1] : 'clip.mp4';
+    }
+
+    async exportClip() {
+        if (!this.state.currentHour || this.state.clipStart === null || this.state.clipEnd === null) return;
+        this.state.isExportingClip = true;
+        this.updateClipUI();
+        let finalMessage = null;
+        let finalError = false;
+        try {
+            const response = await fetch('/api/clip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: this.state.currentHour.path,
+                    start: this.state.clipStart,
+                    end: this.state.clipEnd
+                })
+            });
+            if (!response.ok) {
+                let message = 'Failed to export clip';
+                try {
+                    const error = await response.json();
+                    if (error.detail) message = error.detail;
+                } catch (_) {
+                    // Keep the generic error for non-JSON responses.
+                }
+                throw new Error(message);
+            }
+            const blob = await response.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.download = this.downloadFilename(response);
+            link.href = objectUrl;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+            finalMessage = 'Clip downloaded';
+        } catch (err) {
+            console.error('Clip export failed', err);
+            finalMessage = err.message || 'Failed to export clip';
+            finalError = true;
+        } finally {
+            this.state.isExportingClip = false;
+            this.updateClipUI(finalMessage, finalError);
+        }
+    }
+
     updateUI() {
         this.elements.playPauseBtn.innerHTML = this.state.isPlaying ? 
             '<svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M6.103 1.005A1 1 0 0 1 7 2v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h2l.103.005ZM4 14h2V2H4v12Zm8.102-12.995A1 1 0 0 1 13 2v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h2l.102.005ZM10 14h2V2h-2v12Z" clip-rule="evenodd"/></svg>' : 
@@ -603,6 +753,8 @@ class FricatApp {
     }
 
     clearVideo() {
+        this.state.currentHour = null;
+        this.resetClip();
         this.elements.video.src = '';
         this.elements.videoTimestamp.textContent = '--:--:--';
         this.state.isPlaying = false;
