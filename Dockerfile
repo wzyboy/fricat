@@ -9,6 +9,10 @@ WORKDIR /app
 COPY pyproject.toml uv.lock README.md ./
 COPY fricat ./fricat
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN uv sync --locked --no-dev
 
 VOLUME ["/archive"]

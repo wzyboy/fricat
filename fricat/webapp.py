@@ -1,6 +1,10 @@
 import os
 import json
+import math
+import shutil
 import logging
+import tempfile
+import subprocess
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -10,9 +14,11 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 from fastapi import HTTPException
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
 from fricat.utils import parse_recording_path
@@ -24,6 +30,7 @@ logger = logging.getLogger(__name__)
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
+MAX_CLIP_OFFSET_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,12 @@ class Recording:
     start_utc: datetime
     path: Path
     meta_path: Path | None
+
+
+class ClipRequest(BaseModel):
+    path: str
+    start: float
+    end: float
 
 
 def get_archive_root() -> Path:
@@ -295,6 +308,74 @@ def _read_sidecar(path: str) -> object:
         raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
 
 
+def _resolve_clip_source(root: Path, path: str) -> tuple[Path, datetime]:
+    file_path = (root / path).resolve()
+    try:
+        file_path.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Invalid recording path')
+
+    parsed = parse_recording_path(root, file_path)
+    if not parsed:
+        raise HTTPException(status_code=400, detail='Invalid recording path')
+    date_str, hour_str, _ = parsed
+    try:
+        start_utc = _recording_start_utc(date_str, hour_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail='Invalid recording path')
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail='Recording not found')
+    return file_path, start_utc
+
+
+def _clip_filename(recording_start_utc: datetime, start: float, end: float) -> str:
+    archive_tz = get_archive_tz()
+    start_dt = (recording_start_utc + timedelta(seconds=start)).astimezone(archive_tz)
+    end_dt = (recording_start_utc + timedelta(seconds=end)).astimezone(archive_tz)
+    return f'{start_dt:%Y-%m-%d_%H-%M-%S}_to_{end_dt:%H-%M-%S}.mp4'
+
+
+def _export_clip(source: Path, start: float, end: float) -> tuple[Path, Path]:
+    temp_dir = Path(tempfile.mkdtemp(prefix='fricat-clip-'))
+    output_path = temp_dir / 'clip.mp4'
+    command = [
+        'ffmpeg',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-ss',
+        str(start),
+        '-i',
+        str(source),
+        '-t',
+        str(end - start),
+        '-map',
+        '0:v:0',
+        '-map',
+        '0:a:0',
+        '-c',
+        'copy',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        '-y',
+        str(output_path),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    except (OSError, subprocess.CalledProcessError) as err:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        stderr = err.stderr if isinstance(err, subprocess.CalledProcessError) else str(err)
+        logger.error('Failed to export clip from %s: %s', source, stderr)
+        raise HTTPException(status_code=500, detail='Failed to export clip')
+    if not output_path.is_file():
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        logger.error('FFmpeg did not create clip output for %s', source)
+        raise HTTPException(status_code=500, detail='Failed to export clip')
+    return output_path, temp_dir
+
+
 app = FastAPI(title='fricat archive')
 
 static_dir = Path(__file__).resolve().parent / 'static'
@@ -354,6 +435,24 @@ async def media(path: str) -> FileResponse:
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail='File not found')
     return FileResponse(file_path)
+
+
+@app.post('/api/clip')
+async def export_clip(request: ClipRequest) -> FileResponse:
+    if not math.isfinite(request.start) or not math.isfinite(request.end):
+        raise HTTPException(status_code=400, detail='Clip offsets must be finite')
+    if request.start < 0 or request.end > MAX_CLIP_OFFSET_SECONDS or request.start >= request.end:
+        raise HTTPException(status_code=400, detail='Clip range must satisfy 0 <= start < end <= 3600')
+
+    source, recording_start_utc = _resolve_clip_source(get_archive_root(), request.path)
+    output_path, temp_dir = await run_in_threadpool(_export_clip, source, request.start, request.end)
+    filename = _clip_filename(recording_start_utc, request.start, request.end)
+    return FileResponse(
+        output_path,
+        media_type='video/mp4',
+        filename=filename,
+        background=BackgroundTask(shutil.rmtree, temp_dir, ignore_errors=True),
+    )
 
 
 @app.get('/api/meta')
