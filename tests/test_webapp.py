@@ -442,6 +442,9 @@ def test_index_includes_clip_controls() -> None:
     assert 'id="clip-start-btn"' in response.text
     assert 'id="clip-end-btn"' in response.text
     assert 'id="clip-export-btn"' in response.text
+    assert 'id="clip-start-marker"' in response.text
+    assert 'id="clip-end-marker"' in response.text
+    assert 'id="clip-range"' in response.text
 
 
 def test_activity_profile_handles_null_audio(archive_root: Path) -> None:

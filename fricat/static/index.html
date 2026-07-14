@@ -71,6 +71,13 @@
             <section id="activity-charts" class="activity-section">
                 <canvas id="motion-canvas" class="activity-canvas"></canvas>
                 <canvas id="sound-canvas" class="activity-canvas" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                <div id="clip-range" class="clip-range" hidden></div>
+                <div id="clip-start-marker" class="clip-seek-marker clip-seek-marker-start" hidden>
+                    <span>A</span>
+                </div>
+                <div id="clip-end-marker" class="clip-seek-marker clip-seek-marker-end" hidden>
+                    <span>B</span>
+                </div>
                 <div id="seeker-line" class="seeker-line" style="left: 0;"></div>
             </section>
 

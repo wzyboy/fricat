@@ -34,6 +34,9 @@ class FricatApp {
             motionCanvas: document.getElementById('motion-canvas'),
             soundCanvas: document.getElementById('sound-canvas'),
             seekerLine: document.getElementById('seeker-line'),
+            clipRange: document.getElementById('clip-range'),
+            clipStartMarker: document.getElementById('clip-start-marker'),
+            clipEndMarker: document.getElementById('clip-end-marker'),
             autoplayToggle: document.getElementById('autoplay-toggle'),
             clipStartBtn: document.getElementById('clip-start-btn'),
             clipEndBtn: document.getElementById('clip-end-btn'),
@@ -100,6 +103,7 @@ class FricatApp {
         this.elements.autoplayToggle.onchange = (e) => this.state.autoplay = e.target.checked;
 
         this.elements.video.ontimeupdate = () => this.onTimeUpdate();
+        this.elements.video.onloadedmetadata = () => this.updateClipMarkers();
         this.elements.video.onended = () => {
             if (this.state.autoplay) this.navigateHour(1);
         };
@@ -658,6 +662,36 @@ class FricatApp {
         this.elements.clipStatus.classList.toggle('error', isError);
         this.elements.clipStatus.textContent = message
             || `A ${this.markerTime(this.state.clipStart)} · B ${this.markerTime(this.state.clipEnd)}`;
+        this.updateClipMarkers();
+    }
+
+    clipMarkerPercent(offset) {
+        const videoDuration = this.elements.video.duration;
+        const duration = Number.isFinite(videoDuration) && videoDuration > 0 ? videoDuration : 3600;
+        return Math.max(0, Math.min(100, (offset / duration) * 100));
+    }
+
+    updateClipMarkers() {
+        const start = this.state.clipStart;
+        const end = this.state.clipEnd;
+        const hasStart = start !== null;
+        const hasEnd = end !== null;
+        this.elements.clipStartMarker.hidden = !hasStart;
+        this.elements.clipEndMarker.hidden = !hasEnd;
+        this.elements.clipRange.hidden = !hasStart || !hasEnd;
+
+        if (hasStart) {
+            this.elements.clipStartMarker.style.left = `${this.clipMarkerPercent(start)}%`;
+        }
+        if (hasEnd) {
+            this.elements.clipEndMarker.style.left = `${this.clipMarkerPercent(end)}%`;
+        }
+        if (hasStart && hasEnd) {
+            const startPercent = this.clipMarkerPercent(start);
+            const endPercent = this.clipMarkerPercent(end);
+            this.elements.clipRange.style.left = `${startPercent}%`;
+            this.elements.clipRange.style.width = `${endPercent - startPercent}%`;
+        }
     }
 
     downloadFilename(response) {
