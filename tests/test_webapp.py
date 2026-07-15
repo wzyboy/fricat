@@ -447,6 +447,22 @@ def test_index_includes_clip_controls() -> None:
     assert 'id="clip-range"' in response.text
 
 
+def test_index_includes_accessible_playback_controls() -> None:
+    client = TestClient(webapp.app)
+
+    response = client.get('/')
+
+    assert response.status_code == 200
+    assert 'aria-label="Back 5 minutes">−5m</button>' in response.text
+    assert 'aria-label="Forward 10 seconds">+10s</button>' in response.text
+    assert 'id="activity-seeker"' in response.text
+    assert 'type="range"' in response.text
+    assert 'aria-label="Video position"' in response.text
+    assert 'id="playback-speed"' in response.text
+    for rate in ('1', '1.5', '2', '4', '8', '16'):
+        assert f'<option value="{rate}"' in response.text
+
+
 def test_activity_profile_handles_null_audio(archive_root: Path) -> None:
     profile = webapp.get_activity_profile(archive_root / '2026-03-24' / '23_CAM1.json')
 

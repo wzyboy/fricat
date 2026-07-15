@@ -15,7 +15,8 @@ class FricatApp {
             autoplay: true,
             clipStart: null,
             clipEnd: null,
-            isExportingClip: false
+            isExportingClip: false,
+            playbackRate: 1
         };
 
         // Custom calendar state
@@ -34,6 +35,7 @@ class FricatApp {
             motionCanvas: document.getElementById('motion-canvas'),
             soundCanvas: document.getElementById('sound-canvas'),
             seekerLine: document.getElementById('seeker-line'),
+            activitySeeker: document.getElementById('activity-seeker'),
             clipRange: document.getElementById('clip-range'),
             clipStartMarker: document.getElementById('clip-start-marker'),
             clipEndMarker: document.getElementById('clip-end-marker'),
@@ -42,6 +44,7 @@ class FricatApp {
             clipEndBtn: document.getElementById('clip-end-btn'),
             clipExportBtn: document.getElementById('clip-export-btn'),
             clipStatus: document.getElementById('clip-status'),
+            playbackSpeed: document.getElementById('playback-speed'),
             cameraSelector: document.querySelector('.camera-selector'),
             cameraBtns: []
         };
@@ -103,10 +106,23 @@ class FricatApp {
         this.elements.autoplayToggle.onchange = (e) => this.state.autoplay = e.target.checked;
 
         this.elements.video.ontimeupdate = () => this.onTimeUpdate();
-        this.elements.video.onloadedmetadata = () => this.updateClipMarkers();
+        this.elements.video.onloadedmetadata = () => this.onLoadedMetadata();
+        this.elements.video.ondurationchange = () => this.updateSeekerAvailability();
+        this.elements.video.onplay = () => this.setPlayingState(true);
+        this.elements.video.onpause = () => this.setPlayingState(false);
+        this.elements.video.onemptied = () => {
+            this.setPlayingState(false);
+            this.updateSeekerAvailability();
+        };
+        this.elements.video.onratechange = () => this.syncPlaybackRate();
         this.elements.video.onended = () => {
+            this.setPlayingState(false);
             if (this.state.autoplay) this.navigateHour(1);
         };
+
+        this.elements.video.onclick = () => this.togglePlay();
+        this.elements.activitySeeker.oninput = (e) => this.seekTo(Number(e.target.value));
+        this.elements.playbackSpeed.onchange = (e) => this.setPlaybackRate(Number(e.target.value));
 
         this.elements.copyTimestampBtn.onclick = () => this.copyTimestamp();
         this.elements.clipStartBtn.onclick = () => this.markClipStart();
@@ -118,15 +134,6 @@ class FricatApp {
             if (this.elements.video.requestFullscreen) this.elements.video.requestFullscreen();
         };
 
-        // Activity Seeker Interaction
-        document.getElementById('activity-charts').onclick = (e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const percent = x / rect.width;
-            if (this.elements.video.duration) {
-                this.elements.video.currentTime = this.elements.video.duration * percent;
-            }
-        };
     }
 
     async loadConfig() {
@@ -461,12 +468,10 @@ class FricatApp {
     async playVideo() {
         try {
             await this.elements.video.play();
-            this.state.isPlaying = true;
         } catch (err) {
             console.warn('Playback failed', err);
-            this.state.isPlaying = false;
+            this.setPlayingState(false);
         }
-        this.updateUI();
     }
 
     async loadActivity(path) {
@@ -556,6 +561,7 @@ class FricatApp {
         // Update Seeker
         const percent = (v.currentTime / v.duration) * 100;
         this.elements.seekerLine.style.left = `${percent}%`;
+        this.elements.activitySeeker.value = v.currentTime;
 
         // Update Timestamp
         if (this.state.currentHour) {
@@ -563,22 +569,68 @@ class FricatApp {
             const currentTime = new Date(baseTime.getTime() + v.currentTime * 1000);
             const lp = this.getLocalParts(currentTime);
             this.elements.videoTimestamp.textContent = `${lp.year}-${lp.month}-${lp.day} ${lp.hour}:${lp.minute}:${lp.second}`;
+            this.elements.activitySeeker.setAttribute(
+                'aria-valuetext',
+                `${lp.hour}:${lp.minute}:${lp.second}`
+            );
         }
     }
 
+    onLoadedMetadata() {
+        this.updateSeekerAvailability();
+        this.updateClipMarkers();
+        this.elements.video.playbackRate = this.state.playbackRate;
+    }
+
+    updateSeekerAvailability() {
+        const duration = this.elements.video.duration;
+        const hasDuration = Number.isFinite(duration) && duration > 0;
+        this.elements.activitySeeker.disabled = !hasDuration;
+        this.elements.activitySeeker.max = hasDuration ? duration : 3600;
+        if (!hasDuration) {
+            this.elements.activitySeeker.value = 0;
+            this.elements.seekerLine.style.left = '0%';
+        }
+    }
+
+    setPlayingState(isPlaying) {
+        this.state.isPlaying = isPlaying;
+        this.updateUI();
+    }
+
     async togglePlay() {
+        if (!this.state.currentHour) return;
         const v = this.elements.video;
         if (v.paused) {
             await this.playVideo();
         } else {
             v.pause();
-            this.state.isPlaying = false;
-            this.updateUI();
         }
     }
 
     seek(seconds) {
-        this.elements.video.currentTime += seconds;
+        this.seekTo(this.elements.video.currentTime + seconds);
+    }
+
+    seekTo(seconds) {
+        const duration = this.elements.video.duration;
+        if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(seconds)) return;
+        this.elements.video.currentTime = Math.max(0, Math.min(duration, seconds));
+    }
+
+    setPlaybackRate(rate) {
+        const allowedRates = [1, 1.5, 2, 4, 8, 16];
+        if (!allowedRates.includes(rate)) return;
+        this.state.playbackRate = rate;
+        this.elements.video.playbackRate = rate;
+        this.elements.playbackSpeed.value = String(rate);
+    }
+
+    syncPlaybackRate() {
+        const rate = this.elements.video.playbackRate;
+        if (!Number.isFinite(rate) || rate <= 0) return;
+        this.state.playbackRate = rate;
+        this.elements.playbackSpeed.value = String(rate);
     }
 
     navigateHour(delta) {
@@ -757,6 +809,7 @@ class FricatApp {
         this.state.currentHour = null;
         this.resetClip();
         this.elements.video.src = '';
+        this.updateSeekerAvailability();
         this.elements.videoTimestamp.textContent = '--:--:--';
         this.state.isPlaying = false;
         this.activityRequestSeq += 1;

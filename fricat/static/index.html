@@ -79,6 +79,17 @@
                     <span>B</span>
                 </div>
                 <div id="seeker-line" class="seeker-line" style="left: 0;"></div>
+                <input
+                    id="activity-seeker"
+                    class="activity-seeker"
+                    type="range"
+                    min="0"
+                    max="3600"
+                    step="0.1"
+                    value="0"
+                    aria-label="Video position"
+                    disabled
+                >
             </section>
 
             <!-- Controls Bar -->
@@ -92,12 +103,27 @@
 
                 <!-- Seek Group -->
                 <div class="control-group">
-                    <button class="btn-ctrl" id="rew-5m" title="Back 5m">5m</button>
-                    <button class="btn-ctrl" id="rew-60s" title="Back 60s">1m</button>
-                    <button class="btn-ctrl" id="rew-10s" title="Back 10s">10s</button>
-                    <button class="btn-ctrl" id="ff-10s" title="Forward 10s">10s</button>
-                    <button class="btn-ctrl" id="ff-60s" title="Forward 60s">1m</button>
-                    <button class="btn-ctrl" id="ff-5m" title="Forward 5m">5m</button>
+                    <button class="btn-ctrl seek-btn" id="rew-5m" title="Back 5 minutes" aria-label="Back 5 minutes">−5m</button>
+                    <button class="btn-ctrl seek-btn" id="rew-60s" title="Back 1 minute" aria-label="Back 1 minute">−1m</button>
+                    <button class="btn-ctrl seek-btn" id="rew-10s" title="Back 10 seconds" aria-label="Back 10 seconds">−10s</button>
+                    <button class="btn-ctrl seek-btn" id="ff-10s" title="Forward 10 seconds" aria-label="Forward 10 seconds">+10s</button>
+                    <button class="btn-ctrl seek-btn" id="ff-60s" title="Forward 1 minute" aria-label="Forward 1 minute">+1m</button>
+                    <button class="btn-ctrl seek-btn" id="ff-5m" title="Forward 5 minutes" aria-label="Forward 5 minutes">+5m</button>
+                </div>
+
+                <!-- Speed Group -->
+                <div class="control-group">
+                    <label class="speed-control" for="playback-speed">
+                        <span>Speed</span>
+                        <select id="playback-speed" class="speed-select">
+                            <option value="1" selected>1×</option>
+                            <option value="1.5">1.5×</option>
+                            <option value="2">2×</option>
+                            <option value="4">4×</option>
+                            <option value="8">8×</option>
+                            <option value="16">16×</option>
+                        </select>
+                    </label>
                 </div>
 
                 <!-- Clip Group -->
