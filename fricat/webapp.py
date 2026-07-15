@@ -308,7 +308,7 @@ def _read_sidecar(path: str) -> object:
         raise HTTPException(status_code=500, detail='Sidecar invalid JSON')
 
 
-def _resolve_clip_source(root: Path, path: str) -> tuple[Path, datetime]:
+def _resolve_clip_source(root: Path, path: str) -> tuple[Path, datetime, str]:
     file_path = (root / path).resolve()
     try:
         file_path.relative_to(root)
@@ -318,21 +318,21 @@ def _resolve_clip_source(root: Path, path: str) -> tuple[Path, datetime]:
     parsed = parse_recording_path(root, file_path)
     if not parsed:
         raise HTTPException(status_code=400, detail='Invalid recording path')
-    date_str, hour_str, _ = parsed
+    date_str, hour_str, camera = parsed
     try:
         start_utc = _recording_start_utc(date_str, hour_str)
     except ValueError:
         raise HTTPException(status_code=400, detail='Invalid recording path')
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail='Recording not found')
-    return file_path, start_utc
+    return file_path, start_utc, camera
 
 
-def _clip_filename(recording_start_utc: datetime, start: float, end: float) -> str:
+def _clip_filename(recording_start_utc: datetime, start: float, end: float, camera: str) -> str:
     archive_tz = get_archive_tz()
     start_dt = (recording_start_utc + timedelta(seconds=start)).astimezone(archive_tz)
     end_dt = (recording_start_utc + timedelta(seconds=end)).astimezone(archive_tz)
-    return f'{start_dt:%Y-%m-%d_%H-%M-%S}_to_{end_dt:%H-%M-%S}.mp4'
+    return f'{start_dt:%Y-%m-%d_%H-%M-%S}_to_{end_dt:%H-%M-%S}_{camera}.mp4'
 
 
 def _export_clip(source: Path, start: float, end: float) -> tuple[Path, Path]:
@@ -444,9 +444,9 @@ async def export_clip(request: ClipRequest) -> FileResponse:
     if request.start < 0 or request.end > MAX_CLIP_OFFSET_SECONDS or request.start >= request.end:
         raise HTTPException(status_code=400, detail='Clip range must satisfy 0 <= start < end <= 3600')
 
-    source, recording_start_utc = _resolve_clip_source(get_archive_root(), request.path)
+    source, recording_start_utc, camera = _resolve_clip_source(get_archive_root(), request.path)
     output_path, temp_dir = await run_in_threadpool(_export_clip, source, request.start, request.end)
-    filename = _clip_filename(recording_start_utc, request.start, request.end)
+    filename = _clip_filename(recording_start_utc, request.start, request.end, camera)
     return FileResponse(
         output_path,
         media_type='video/mp4',

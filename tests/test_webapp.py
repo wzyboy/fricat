@@ -334,7 +334,7 @@ def test_clip_export_stream_copies_mp4_and_cleans_up(monkeypatch, archive_root: 
     assert response.content == b'clip-data'
     assert response.headers['content-type'] == 'video/mp4'
     assert response.headers['content-disposition'] == (
-        'attachment; filename="2026-03-24_15-01-01_to_15-02-05.mp4"'
+        'attachment; filename="2026-03-24_15-01-01_to_15-02-05_CAM1.mp4"'
     )
     command = commands[0]
     assert command[command.index('-ss') + 1] == '61.9'
