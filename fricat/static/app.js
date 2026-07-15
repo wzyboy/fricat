@@ -606,7 +606,8 @@ class FricatApp {
         canvas.height = v.videoHeight;
         canvas.getContext('2d').drawImage(v, 0, 0);
         const link = document.createElement('a');
-        link.download = `fricat_${this.elements.videoTimestamp.textContent.replace(/[: ]/g, '_')}.jpg`;
+        const timestamp = this.elements.videoTimestamp.textContent.replace(' ', '_').replace(/:/g, '-');
+        link.download = `${timestamp}_${this.state.currentHour.camera}.jpg`;
         link.href = canvas.toDataURL('image/jpeg', 0.9);
         link.click();
     }
