@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
-MAX_CLIP_OFFSET_SECONDS = 3600.0
 
 
 @dataclass(frozen=True)
@@ -441,8 +440,8 @@ async def media(path: str) -> FileResponse:
 async def export_clip(request: ClipRequest) -> FileResponse:
     if not math.isfinite(request.start) or not math.isfinite(request.end):
         raise HTTPException(status_code=400, detail='Clip offsets must be finite')
-    if request.start < 0 or request.end > MAX_CLIP_OFFSET_SECONDS or request.start >= request.end:
-        raise HTTPException(status_code=400, detail='Clip range must satisfy 0 <= start < end <= 3600')
+    if request.start < 0 or request.start >= request.end:
+        raise HTTPException(status_code=400, detail='Clip range must satisfy 0 <= start < end')
 
     source, recording_start_utc, camera = _resolve_clip_source(get_archive_root(), request.path)
     output_path, temp_dir = await run_in_threadpool(_export_clip, source, request.start, request.end)

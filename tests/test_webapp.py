@@ -351,7 +351,6 @@ def test_clip_export_stream_copies_mp4_and_cleans_up(monkeypatch, archive_root: 
         (-1, 1),
         (1, 1),
         (2, 1),
-        (0, 3600.1),
         ('nan', 1),
         (0, 'inf'),
     ],
