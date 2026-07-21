@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import click
+from tqdm import tqdm
 
 from fricat.media import MAX_ARCHIVE_DURATION_SECONDS
 from fricat.media import remux
@@ -26,6 +27,20 @@ def repair_recording(recording: Path, max_duration: float) -> None:
         os.replace(repaired, recording)
 
 
+def find_recordings(archive_root: Path) -> list[Path]:
+    recordings: list[Path] = []
+    with tqdm(desc='Finding recordings', unit='dir') as progress:
+        for directory, _, file_names in archive_root.walk():
+            progress.update()
+            recordings.extend(
+                path
+                for file_name in file_names
+                if (path := directory / file_name).suffix == '.mkv'
+                and parse_recording_path(archive_root, path) is not None
+            )
+    return sorted(recordings)
+
+
 @click.command()
 @click.argument(
     'archive_root',
@@ -46,46 +61,54 @@ def repair_recording(recording: Path, max_duration: float) -> None:
 def main(archive_root: Path, apply: bool, max_duration: float) -> None:
     """Scan and optionally repair malformed hourly MKV archives."""
     archive_root = archive_root.resolve()
-    recordings = [
-        path
-        for path in sorted(archive_root.rglob('*.mkv'))
-        if parse_recording_path(archive_root, path) is not None
-    ]
+    recordings = find_recordings(archive_root)
     if not recordings:
         click.echo('No recordings found.')
         return
 
     valid = 0
-    malformed = 0
+    malformed_recordings: list[Path] = []
     repaired = 0
     failed = 0
-    for recording in recordings:
+    for recording in tqdm(recordings, desc='Scanning recordings', unit='recording'):
         relative_path = recording.relative_to(archive_root)
         try:
             duration = probe_duration(recording)
         except (OSError, subprocess.CalledProcessError, ValueError) as err:
             failed += 1
-            click.echo(f'ERROR     {relative_path}: {err}', err=True)
+            tqdm.write(
+                f'ERROR     {relative_path}: {err}',
+                file=click.get_text_stream('stderr'),
+            )
             continue
 
         if duration_is_valid(duration, max_duration):
             valid += 1
             continue
 
-        malformed += 1
-        click.echo(f'MALFORMED {relative_path}: {duration:.3f}s')
-        if not apply:
-            continue
+        malformed_recordings.append(recording)
+        tqdm.write(f'MALFORMED {relative_path}: {duration:.3f}s')
 
-        try:
-            repair_recording(recording, max_duration)
-        except (OSError, subprocess.CalledProcessError, ValueError) as err:
-            failed += 1
-            click.echo(f'FAILED    {relative_path}: {err}', err=True)
-            continue
-        repaired += 1
-        click.echo(f'REPAIRED  {relative_path}')
+    if apply:
+        for recording in tqdm(
+            malformed_recordings,
+            desc='Repairing recordings',
+            unit='recording',
+        ):
+            relative_path = recording.relative_to(archive_root)
+            try:
+                repair_recording(recording, max_duration)
+            except (OSError, subprocess.CalledProcessError, ValueError) as err:
+                failed += 1
+                tqdm.write(
+                    f'FAILED    {relative_path}: {err}',
+                    file=click.get_text_stream('stderr'),
+                )
+                continue
+            repaired += 1
+            tqdm.write(f'REPAIRED  {relative_path}')
 
+    malformed = len(malformed_recordings)
     click.echo(
         f'Scanned {len(recordings)} recordings: {valid} valid, {malformed} malformed, '
         f'{repaired} repaired, {failed} failed.'

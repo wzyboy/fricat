@@ -26,6 +26,9 @@ def test_repair_defaults_to_dry_run(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert result.exit_code == 0
     assert 'MALFORMED 2026-07-20/23_CAM2.mkv: 99029.000s' in result.output
     assert '1 malformed, 0 repaired, 0 failed' in result.output
+    assert 'Finding recordings:' in result.stderr
+    assert 'Scanning recordings:' in result.stderr
+    assert 'Repairing recordings:' not in result.stderr
     assert recording.read_bytes() == b'original'
     assert remux_calls == []
 
@@ -49,6 +52,7 @@ def test_repair_apply_preserves_permissions_but_updates_mtime(
 
     assert result.exit_code == 0
     assert 'REPAIRED  2026-07-20/23_CAM2.mkv' in result.output
+    assert 'Repairing recordings:' in result.stderr
     assert recording.read_bytes() == b'repaired'
     assert recording.stat().st_mode & 0o777 == 0o640
     assert recording.stat().st_mtime_ns > timestamp_ns
