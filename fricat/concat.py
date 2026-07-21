@@ -1,3 +1,4 @@
+import os
 import shlex
 import itertools
 import subprocess
@@ -8,9 +9,14 @@ from datetime import UTC
 from datetime import datetime
 from datetime import timedelta
 from tempfile import NamedTemporaryFile
+from tempfile import TemporaryDirectory
 
 import click
 
+from fricat.media import MAX_ARCHIVE_DURATION_SECONDS
+from fricat.media import remux
+from fricat.media import probe_duration
+from fricat.media import duration_is_valid
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
 from fricat.sidecar import write_sidecar
@@ -37,6 +43,36 @@ def ffmpeg(src_files: list[Path], dst_file: Path) -> int:
         dst_file.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(ffmpeg, check=True)
     return dst_file.stat().st_size
+
+
+def build_validated_archive(src_files: list[Path], dst_file: Path) -> tuple[int, bool]:
+    dst_file.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f'.{dst_file.stem}.', dir=dst_file.parent) as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        concat_file = temp_dir / 'concat.mkv'
+        ffmpeg(src_files, concat_file)
+
+        repaired = False
+        candidate = concat_file
+        try:
+            duration = probe_duration(candidate)
+        except (subprocess.CalledProcessError, ValueError):
+            duration = float('nan')
+
+        if not duration_is_valid(duration):
+            repaired = True
+            candidate = temp_dir / 'remuxed.mkv'
+            remux(concat_file, candidate)
+            repaired_duration = probe_duration(candidate)
+            if not duration_is_valid(repaired_duration):
+                raise ValueError(
+                    f'Remuxed archive duration is invalid: {repaired_duration:.3f}s '
+                    f'(maximum {MAX_ARCHIVE_DURATION_SECONDS:.3f}s)'
+                )
+
+        size = candidate.stat().st_size
+        os.replace(candidate, dst_file)
+        return size, repaired
 
 
 @click.command()
@@ -76,6 +112,7 @@ def main(
     recordings = sorted(src_root.rglob('*.mp4'))
     total_inputs = 0
     total_size = 0
+    repaired_files = 0
     for key, group in itertools.groupby(recordings, key=group_key):
         date_str, hour_str, cam_name = key
         grouped_recordings = list(group)
@@ -93,7 +130,9 @@ def main(
             continue
 
         total_inputs += len(grouped_recordings)
-        total_size += ffmpeg(grouped_recordings, dst_file)
+        archive_size, repaired = build_validated_archive(grouped_recordings, dst_file)
+        total_size += archive_size
+        repaired_files += int(repaired)
 
         # Generate sidecar JSON file
         sidecar_path = dst_file.with_suffix('.json')
@@ -116,6 +155,7 @@ def main(
         metrics={
             'fricat_concat_processed_bytes': total_size,
             'fricat_concat_processed_files': total_inputs,
+            'fricat_concat_repaired_files': repaired_files,
             'fricat_concat_duration_seconds': duration,
             'fricat_concat_last_run_timestamp_seconds': timestamp,
         },

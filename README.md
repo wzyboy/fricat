@@ -5,13 +5,14 @@ Small CLI utilities for managing Frigate-style recordings and dated backup direc
 ## What it does
 
 - `concat`: concatenate per-hour/per-camera MP4 segments into a single MKV per hour.
+- `repair`: scan and stream-copy repair hourly archives with malformed duration metadata.
 - `prune`: apply a GFS (daily/weekly/monthly/yearly) retention policy to `YYYY-MM-DD` directories.
 - `web`: serve a local browser UI for reviewing archived recordings by camera, date, and hour.
 
 ## Requirements
 
 - Python 3.13+
-- `ffmpeg` on PATH (for `concat`)
+- `ffmpeg` and `ffprobe` on PATH (for `concat` and `repair`)
 - Permissions to write metrics files (defaults under `/var/lib/node_exporter/`)
 
 ## Install
@@ -56,6 +57,23 @@ Notes:
 - Only processes fully-finished hours: if now is 10:00 UTC, it only processes up to `08`.
 - Skips output files that already exist.
 - Writes Prometheus metrics to `/var/lib/node_exporter/fricat_concat.prom` by default.
+- Validates each completed archive and stream-copy remuxes files with malformed durations before publishing them.
+
+### repair
+
+Scan existing hourly archives for malformed container durations. Scanning is the default and does not modify files:
+
+```bash
+fricat repair /media/frigate/archive
+```
+
+Repair malformed files in place with an atomic stream-copy remux:
+
+```bash
+fricat repair /media/frigate/archive --apply
+```
+
+The default maximum duration is 3700 seconds and can be changed with `--max-duration`. Run this command on the machine that stores the archive to avoid transferring media over the network. JSON sidecars are not modified. A repaired file keeps its ownership and mode, while its modification time records when the repair occurred.
 
 ### prune
 
