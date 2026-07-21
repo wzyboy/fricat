@@ -5,6 +5,7 @@ Small CLI utilities for managing Frigate-style recordings and dated backup direc
 ## What it does
 
 - `concat`: concatenate per-hour/per-camera MP4 segments into a single MKV per hour.
+- `check-segments`: check recent Frigate segments for missing, sparse, or corrupt audio.
 - `repair`: scan and stream-copy repair hourly archives with malformed duration metadata.
 - `prune`: apply a GFS (daily/weekly/monthly/yearly) retention policy to `YYYY-MM-DD` directories.
 - `web`: serve a local browser UI for reviewing archived recordings by camera, date, and hour.
@@ -12,7 +13,7 @@ Small CLI utilities for managing Frigate-style recordings and dated backup direc
 ## Requirements
 
 - Python 3.13+
-- `ffmpeg` and `ffprobe` on PATH (for `concat` and `repair`)
+- `ffmpeg` and `ffprobe` on PATH (for `concat`, `repair`, `check-segments`, and clip export)
 - Permissions to write metrics files (defaults under `/var/lib/node_exporter/`)
 
 ## Install
@@ -58,6 +59,19 @@ Notes:
 - Skips output files that already exist.
 - Writes Prometheus metrics to `/var/lib/node_exporter/fricat_concat.prom` by default.
 - Validates each completed archive and stream-copy remuxes files with malformed durations before publishing them.
+- Samples source-segment audio health, warns about corruption, and reports affected hourly archives in metrics without altering their packets.
+
+### check-segments
+
+Check the newest completed Frigate segments for each camera:
+
+```bash
+fricat check-segments /fastpool/frigate/recordings
+```
+
+The command prints a status for each camera and exits with `0` when healthy, `1` when recordings are corrupt or stale, and `2` when the check itself cannot run reliably.
+
+By default it checks the three newest files that have been settled for at least 15 seconds, requires the newest completed segment to be no more than 60 seconds old, and rejects audio packet durations or PTS gaps over one second. See `fricat check-segments --help` for overrides.
 
 ### repair
 
@@ -103,11 +117,13 @@ Serve the archive browser at `http://127.0.0.1:8000`:
 fricat web --root /media/frigate/archive
 ```
 
+Exported clips stream-copy video and normalize audio timestamps to AAC, filling missing source-audio intervals with silence for consistent playback. Hourly archives remain packet-faithful.
+
 ## Metrics
 
-Both commands write Prometheus textfile metrics via `prometheus-client`:
+The `concat` and `prune` commands write Prometheus textfile metrics via `prometheus-client`:
 
-- `concat`: processed bytes/files, duration, last run timestamp
+- `concat`: processed bytes/files, repaired files, malformed-audio archives, duration, last run timestamp
 - `prune`: input/kept/removed counts, removed bytes, duration, last run timestamp
 
 Override the output path with `--metrics-file` on each command.

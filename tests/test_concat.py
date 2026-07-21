@@ -4,6 +4,7 @@ import pytest
 from click.testing import CliRunner
 
 from fricat import concat
+from fricat.media import AudioHealth
 
 
 def _fake_concat(src_files: list[Path], destination: Path) -> int:
@@ -90,6 +91,7 @@ def test_concat_reports_automatic_repairs_in_metrics(
         captured_metrics.update(metrics)
 
     monkeypatch.setattr(concat, 'build_validated_archive', fake_build)
+    monkeypatch.setattr(concat, 'find_audio_issue', lambda src_files: None)
     monkeypatch.setattr(concat, 'generate_sidecar', lambda **kwargs: None)
     monkeypatch.setattr(concat, 'write_metrics_file', fake_write_metrics)
 
@@ -106,3 +108,64 @@ def test_concat_reports_automatic_repairs_in_metrics(
     assert result.exit_code == 0
     assert captured_metrics['fricat_concat_processed_files'] == 1
     assert captured_metrics['fricat_concat_repaired_files'] == 1
+    assert captured_metrics['fricat_concat_malformed_audio_archives'] == 0
+
+
+def test_representative_segments_selects_start_middle_and_end(tmp_path: Path) -> None:
+    segments = [tmp_path / f'{index}.mp4' for index in range(10)]
+
+    assert concat.representative_segments(segments) == [segments[0], segments[5], segments[9]]
+
+
+def test_find_audio_issue_reports_sparse_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    segments = [tmp_path / f'{index}.mp4' for index in range(3)]
+    monkeypatch.setattr(
+        concat,
+        'probe_audio_health',
+        lambda path: AudioHealth(False, 1, 'only 1 audio packet')
+        if path == segments[1]
+        else AudioHealth(True, 78),
+    )
+
+    issue = concat.find_audio_issue(segments)
+
+    assert issue == (segments[1], 'only 1 audio packet')
+
+
+def test_concat_reports_malformed_audio_metric(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / 'source' / '2025-01-01' / '00' / 'CAM2'
+    source.mkdir(parents=True)
+    segment = source / '00.00.mp4'
+    segment.write_bytes(b'segment')
+    captured_metrics: dict[str, float | int] = {}
+
+    def fake_build(src_files: list[Path], dst_file: Path) -> tuple[int, bool]:
+        dst_file.parent.mkdir(parents=True)
+        dst_file.write_bytes(b'archive')
+        return len(b'archive'), False
+
+    monkeypatch.setattr(concat, 'build_validated_archive', fake_build)
+    monkeypatch.setattr(concat, 'find_audio_issue', lambda src_files: (segment, 'only 1 audio packet'))
+    monkeypatch.setattr(concat, 'generate_sidecar', lambda **kwargs: None)
+    monkeypatch.setattr(
+        concat,
+        'write_metrics_file',
+        lambda path, metrics: captured_metrics.update(metrics),
+    )
+
+    result = CliRunner().invoke(
+        concat.main,
+        [
+            str(tmp_path / 'source'),
+            str(tmp_path / 'archive'),
+            '--metrics-file',
+            str(tmp_path / 'metrics.prom'),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert 'WARNING: malformed audio for 2025-01-01/00_CAM2' in result.output
+    assert captured_metrics['fricat_concat_malformed_audio_archives'] == 1

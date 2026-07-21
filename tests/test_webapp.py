@@ -1,5 +1,6 @@
 import os
 import json
+import shutil
 import logging
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from fricat import media
 from fricat import webapp
 
 
@@ -340,9 +342,53 @@ def test_clip_export_stream_copies_mp4_and_cleans_up(monkeypatch, archive_root: 
     assert command[command.index('-ss') + 1] == '61.9'
     assert command[command.index('-t') + 1] == str(125.1 - 61.9)
     assert command[command.index('-map') + 1] == '0:v:0'
-    assert command[command.index('-c') + 1] == 'copy'
+    assert command[command.index('-map', command.index('-map') + 1) + 1] == '0:a:0?'
+    assert command[command.index('-c:v') + 1] == 'copy'
+    assert command[command.index('-af') + 1] == 'aresample=async=1:first_pts=0,apad'
+    assert command[command.index('-c:a') + 1] == 'aac'
+    assert '-shortest' in command
     assert command[command.index('-movflags') + 1] == '+faststart'
     assert all(not output_dir.exists() for output_dir in output_dirs)
+
+
+@pytest.mark.skipif(
+    shutil.which('ffmpeg') is None or shutil.which('ffprobe') is None,
+    reason='ffmpeg and ffprobe are required',
+)
+def test_clip_export_normalizes_sparse_audio(tmp_path: Path) -> None:
+    source = tmp_path / 'sparse.mkv'
+    subprocess.run(
+        [
+            'ffmpeg',
+            '-hide_banner',
+            '-loglevel',
+            'error',
+            '-f',
+            'lavfi',
+            '-i',
+            'color=size=160x90:rate=10:duration=4',
+            '-f',
+            'lavfi',
+            '-i',
+            'sine=frequency=440:sample_rate=8000:duration=4',
+            '-filter:a',
+            "aselect='lt(t,0.256)+between(t,2,2.256)'",
+            '-c:v',
+            'mpeg4',
+            '-c:a',
+            'aac',
+            str(source),
+        ],
+        check=True,
+    )
+
+    output_path, temp_dir = webapp._export_clip(source, 0, 4)
+    try:
+        health = media.probe_audio_health(output_path, max_gap=0.5)
+        assert health.healthy is True
+        assert health.packet_count > 20
+    finally:
+        shutil.rmtree(temp_dir)
 
 
 @pytest.mark.parametrize(

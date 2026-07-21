@@ -1,5 +1,6 @@
 __pycache__
 *.mkv
+*.mp4
 test_folder/
 test_folder
 .envrc

@@ -17,6 +17,7 @@ from fricat.media import MAX_ARCHIVE_DURATION_SECONDS
 from fricat.media import remux
 from fricat.media import probe_duration
 from fricat.media import duration_is_valid
+from fricat.media import probe_audio_health
 from fricat.utils import format_size
 from fricat.metrics import write_metrics_file
 from fricat.sidecar import write_sidecar
@@ -75,6 +76,24 @@ def build_validated_archive(src_files: list[Path], dst_file: Path) -> tuple[int,
         return size, repaired
 
 
+def representative_segments(src_files: list[Path]) -> list[Path]:
+    if not src_files:
+        return []
+    indices = sorted({0, len(src_files) // 2, len(src_files) - 1})
+    return [src_files[index] for index in indices]
+
+
+def find_audio_issue(src_files: list[Path]) -> tuple[Path, str] | None:
+    for segment in representative_segments(src_files):
+        try:
+            health = probe_audio_health(segment)
+        except (OSError, subprocess.CalledProcessError, ValueError) as err:
+            return segment, f'unable to probe audio: {err}'
+        if not health.healthy:
+            return segment, health.reason or 'audio is unhealthy'
+    return None
+
+
 @click.command()
 @click.argument('src_root', type=click.Path(path_type=Path))
 @click.argument('dst_root', type=click.Path(path_type=Path))
@@ -113,6 +132,7 @@ def main(
     total_inputs = 0
     total_size = 0
     repaired_files = 0
+    malformed_audio_archives = 0
     for key, group in itertools.groupby(recordings, key=group_key):
         date_str, hour_str, cam_name = key
         grouped_recordings = list(group)
@@ -130,6 +150,15 @@ def main(
             continue
 
         total_inputs += len(grouped_recordings)
+        audio_issue = find_audio_issue(grouped_recordings)
+        if audio_issue is not None:
+            segment, reason = audio_issue
+            malformed_audio_archives += 1
+            click.echo(
+                f'WARNING: malformed audio for {date_str}/{hour_str}_{cam_name}: '
+                f'{segment.name}: {reason}',
+                err=True,
+            )
         archive_size, repaired = build_validated_archive(grouped_recordings, dst_file)
         total_size += archive_size
         repaired_files += int(repaired)
@@ -156,6 +185,7 @@ def main(
             'fricat_concat_processed_bytes': total_size,
             'fricat_concat_processed_files': total_inputs,
             'fricat_concat_repaired_files': repaired_files,
+            'fricat_concat_malformed_audio_archives': malformed_audio_archives,
             'fricat_concat_duration_seconds': duration,
             'fricat_concat_last_run_timestamp_seconds': timestamp,
         },
