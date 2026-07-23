@@ -101,3 +101,35 @@ network interruption.
 This mitigation may prevent FFmpeg from trusting the discontinuous RTP clock,
 but it is not a substitute for correcting or explicitly signaling producer
 replacement in go2rtc.
+
+## Controlled A/B reproduction
+
+The Frigate VM's network interface was disconnected for exactly seven seconds.
+CAM1 through CAM4 used `preset-rtsp-restream`; CAM5 through CAM8 used
+`preset-rtsp-generic` for their main record/audio inputs. Detect substreams
+continued to use the restream preset for all cameras.
+
+All eight cameras' main and sub go2rtc producers reached their five-second
+upstream timeout. Persistent FFmpeg detect sessions then reported large RTP
+sequence discontinuities (`bad cseq`), confirming that new RTP tracks had been
+attached to existing downstream sessions. No recording FFmpeg process timed out
+or restarted during the seven-second interruption.
+
+The groups behaved differently:
+
+- CAM1 through CAM4 produced a final partial segment containing 803 to 866 AAC
+  packets over approximately 7.3 to 9.6 seconds. Many packet durations collapsed
+  to 0.000125 seconds. The recorders then stopped producing segments.
+- Frigate's 120-second recording watchdog restarted all four restream recorders
+  approximately 96 to 117 seconds later.
+- CAM5 through CAM8 produced normal partial recovery segments containing 57 to
+  61 AAC packets over approximately 7.2 to 7.8 seconds, followed by 31 to 32
+  packets over approximately four seconds, and then continued recording.
+- None of the four generic recorders restarted; their original process IDs
+  remained active.
+
+This controlled result strongly supports wall-clock input timestamps as an
+effective Frigate-side mitigation. It also reproduces another consequence of
+the same RTP discontinuity: the restream consumers can generate a burst of
+near-zero-duration AAC packets and then stall, rather than always producing the
+previously observed one-packet/huge-duration form.
