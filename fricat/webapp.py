@@ -4,7 +4,6 @@ import math
 import shutil
 import logging
 import tempfile
-import subprocess
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -21,14 +20,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 
+from fricat.clip import DEFAULT_ARCHIVE_TIMEZONE
+from fricat.clip import ClipExportError
+from fricat.clip import clip_filename
+from fricat.clip import export_source_clip
+from fricat.clip import recording_start_utc
 from fricat.utils import parse_recording_path
 
 logger = logging.getLogger(__name__)
 
-# Legacy files were using local time in filenames, while newer files are using
-# UTC time in filenames.
-LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
-DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
 
 
@@ -62,10 +62,7 @@ def get_archive_tz() -> ZoneInfo:
 
 
 def _recording_start_utc(date_str: str, hour_str: str) -> datetime:
-    filename_dt = datetime.fromisoformat(f'{date_str} {hour_str}:00:00')
-    if filename_dt < LEGACY_FILENAME_CUTOFF:
-        return filename_dt.replace(tzinfo=get_archive_tz()).astimezone(UTC)
-    return filename_dt.replace(tzinfo=UTC)
+    return recording_start_utc(date_str, hour_str, get_archive_tz())
 
 
 def _archive_date_str(path: Path) -> str | None:
@@ -328,55 +325,20 @@ def _resolve_clip_source(root: Path, path: str) -> tuple[Path, datetime, str]:
 
 
 def _clip_filename(recording_start_utc: datetime, start: float, end: float, camera: str) -> str:
-    archive_tz = get_archive_tz()
-    start_dt = (recording_start_utc + timedelta(seconds=start)).astimezone(archive_tz)
-    end_dt = (recording_start_utc + timedelta(seconds=end)).astimezone(archive_tz)
-    return f'{start_dt:%Y-%m-%d_%H-%M-%S}_to_{end_dt:%H-%M-%S}_{camera}.mp4'
+    start_utc = recording_start_utc + timedelta(seconds=start)
+    end_utc = recording_start_utc + timedelta(seconds=end)
+    return clip_filename(start_utc, end_utc, camera, get_archive_tz())
 
 
 def _export_clip(source: Path, start: float, end: float) -> tuple[Path, Path]:
     temp_dir = Path(tempfile.mkdtemp(prefix='fricat-clip-'))
     output_path = temp_dir / 'clip.mp4'
-    command = [
-        'ffmpeg',
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-ss',
-        str(start),
-        '-i',
-        str(source),
-        '-t',
-        str(end - start),
-        '-map',
-        '0:v:0',
-        '-map',
-        '0:a:0?',
-        '-c:v',
-        'copy',
-        '-af',
-        'aresample=async=1:first_pts=0,apad',
-        '-c:a',
-        'aac',
-        '-shortest',
-        '-avoid_negative_ts',
-        'make_zero',
-        '-movflags',
-        '+faststart',
-        '-y',
-        str(output_path),
-    ]
     try:
-        subprocess.run(command, check=True, capture_output=True, text=True)
-    except (OSError, subprocess.CalledProcessError) as err:
+        export_source_clip(source, start, end - start, output_path)
+    except ClipExportError as err:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        stderr = err.stderr if isinstance(err, subprocess.CalledProcessError) else str(err)
-        logger.error('Failed to export clip from %s: %s', source, stderr)
-        raise HTTPException(status_code=500, detail='Failed to export clip')
-    if not output_path.is_file():
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        logger.error('FFmpeg did not create clip output for %s', source)
-        raise HTTPException(status_code=500, detail='Failed to export clip')
+        logger.error('Failed to export clip from %s: %s', source, err)
+        raise HTTPException(status_code=500, detail='Failed to export clip') from err
     return output_path, temp_dir
 
 

@@ -11,6 +11,7 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from fricat import clip
 from fricat import media
 from fricat import webapp
 
@@ -317,14 +318,13 @@ def test_clip_export_stream_copies_mp4_and_cleans_up(monkeypatch, archive_root: 
     commands: list[list[str]] = []
     output_dirs: list[Path] = []
 
-    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str]) -> None:
         commands.append(command)
         output_path = Path(command[-1])
         output_dirs.append(output_path.parent)
         output_path.write_bytes(b'clip-data')
-        return subprocess.CompletedProcess(command, 0, '', '')
 
-    monkeypatch.setattr(webapp.subprocess, 'run', fake_run)
+    monkeypatch.setattr(clip, '_run', fake_run)
     client = TestClient(webapp.app)
 
     response = client.post(
@@ -421,11 +421,10 @@ def test_clip_export_rejects_invalid_ranges(
 def test_clip_export_accepts_full_hour_boundary(monkeypatch, archive_root: Path) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
 
-    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str]) -> None:
         Path(command[-1]).write_bytes(b'clip-data')
-        return subprocess.CompletedProcess(command, 0, '', '')
 
-    monkeypatch.setattr(webapp.subprocess, 'run', fake_run)
+    monkeypatch.setattr(clip, '_run', fake_run)
     client = TestClient(webapp.app)
 
     response = client.post(
@@ -461,10 +460,10 @@ def test_clip_export_rejects_invalid_or_missing_sources(
 def test_clip_export_handles_ffmpeg_failure(monkeypatch, archive_root: Path, caplog) -> None:
     monkeypatch.setenv('FRICAT_ARCHIVE_ROOT', str(archive_root))
 
-    def fail_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        raise subprocess.CalledProcessError(1, command, stderr='muxing failed')
+    def fail_run(command: list[str]) -> None:
+        raise clip.ClipExportError('muxing failed')
 
-    monkeypatch.setattr(webapp.subprocess, 'run', fail_run)
+    monkeypatch.setattr(clip, '_run', fail_run)
     client = TestClient(webapp.app)
 
     with caplog.at_level(logging.ERROR, logger='fricat.webapp'):

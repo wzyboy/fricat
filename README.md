@@ -5,6 +5,7 @@ Small CLI utilities for managing Frigate-style recordings and dated backup direc
 ## What it does
 
 - `concat`: concatenate per-hour/per-camera MP4 segments into a single MKV per hour.
+- `export-clip`: export a clip from hourly archives and recent raw segments.
 - `check-segments`: check recent Frigate segments for missing, sparse, or corrupt audio.
 - `repair`: scan and stream-copy repair hourly archives with malformed duration metadata.
 - `prune`: apply a GFS (daily/weekly/monthly/yearly) retention policy to `YYYY-MM-DD` directories.
@@ -60,6 +61,30 @@ Notes:
 - Writes Prometheus metrics to `/var/lib/node_exporter/fricat_concat.prom` by default.
 - Validates each completed archive and stream-copy remuxes files with malformed durations before publishing them.
 - Samples source-segment audio health, warns about corruption, and reports affected hourly archives in metrics without altering their packets.
+
+### export-clip
+
+Export a clip without running the web UI:
+
+```bash
+fricat export-clip CAM1 \
+  '2026-07-26 08:55:00' \
+  '2026-07-26 09:05:00' \
+  --archive-root /media/frigate/archive \
+  --segments-root /media/frigate/recordings
+```
+
+`START` and `END` are local ISO timestamps interpreted in
+`America/Vancouver` by default. Use `--timezone` to select another IANA
+timezone and `-o/--output` to choose the output path.
+
+The exporter can cross hour and date boundaries. It prefers completed hourly
+archives and fills newer, uncovered intervals from raw Frigate segments. It
+fails without creating a partial clip if any part of the requested range is
+unavailable. Existing output files are never overwritten.
+
+Like clips exported by the web UI, CLI clips stream-copy video and normalize
+audio timestamps to AAC, filling sparse source-audio intervals with silence.
 
 ### check-segments
 
