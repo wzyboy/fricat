@@ -136,6 +136,110 @@ def test_resolve_media_slices_combines_archive_and_raw(
     ]
 
 
+def test_resolve_media_slices_skips_raw_discovery_when_archive_covers_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = datetime(2026, 7, 26, 8, 10, tzinfo=UTC)
+    end = datetime(2026, 7, 26, 8, 20, tzinfo=UTC)
+    archive = clip.MediaSource(
+        Path('/archive/08_CAM1.mkv'),
+        datetime(2026, 7, 26, 8, tzinfo=UTC),
+        datetime(2026, 7, 26, 9, tzinfo=UTC),
+        priority=0,
+    )
+    monkeypatch.setattr(clip, 'find_archive_sources', lambda *args: [archive])
+
+    def fail_raw_discovery(*args: object) -> list[clip.MediaSource]:
+        raise AssertionError('raw segments should not be scanned')
+
+    monkeypatch.setattr(clip, 'find_segment_sources_for_ranges', fail_raw_discovery)
+
+    slices = clip.resolve_media_slices(
+        Path('/archive'),
+        Path('/segments'),
+        'CAM1',
+        start,
+        end,
+        ZoneInfo('UTC'),
+    )
+
+    assert slices == [
+        clip.MediaSlice(Path('/archive/08_CAM1.mkv'), 600.0, 600.0),
+    ]
+
+
+def test_find_segment_sources_probes_only_requested_minute(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / 'segments'
+    for hour in (8, 9):
+        camera_dir = root / '2026-07-26' / f'{hour:02d}' / 'CAM1'
+        camera_dir.mkdir(parents=True)
+        for index in range(360):
+            minute, second_index = divmod(index, 6)
+            second = second_index * 10
+            (camera_dir / f'{minute:02d}.{second:02d}.mp4').write_bytes(b'media')
+
+    probed: list[Path] = []
+
+    def fake_probe(path: Path) -> float:
+        probed.append(path)
+        return 10.0
+
+    monkeypatch.setattr(clip, 'probe_duration', fake_probe)
+    start = datetime(2026, 7, 26, 9, 55, tzinfo=UTC)
+    end = datetime(2026, 7, 26, 9, 56, tzinfo=UTC)
+
+    sources = clip.find_segment_sources(root, 'CAM1', start, end)
+
+    assert [source.path.name for source in sources] == [
+        '55.00.mp4',
+        '55.10.mp4',
+        '55.20.mp4',
+        '55.30.mp4',
+        '55.40.mp4',
+        '55.50.mp4',
+    ]
+    assert [path.name for path in probed] == [
+        '54.50.mp4',
+        '55.00.mp4',
+        '55.10.mp4',
+        '55.20.mp4',
+        '55.30.mp4',
+        '55.40.mp4',
+        '55.50.mp4',
+    ]
+
+
+def test_find_uncovered_ranges_returns_only_archive_gaps() -> None:
+    start = datetime(2026, 7, 26, 8, tzinfo=UTC)
+    end = datetime(2026, 7, 26, 10, tzinfo=UTC)
+    sources = [
+        clip.MediaSource(
+            Path('/archive/08_CAM1.mkv'),
+            start,
+            start + timedelta(hours=1),
+            priority=0,
+        ),
+        clip.MediaSource(
+            Path('/archive/09_CAM1.mkv'),
+            start + timedelta(hours=1, minutes=5),
+            end,
+            priority=0,
+        ),
+    ]
+
+    ranges = clip.find_uncovered_ranges(sources, start, end)
+
+    assert ranges == [
+        (
+            datetime(2026, 7, 26, 9, tzinfo=UTC),
+            datetime(2026, 7, 26, 9, 5, tzinfo=UTC),
+        )
+    ]
+
+
 def test_export_media_slices_publishes_atomically(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

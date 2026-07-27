@@ -1,6 +1,7 @@
 import os
 import math
 import subprocess
+from bisect import bisect_left
 from pathlib import Path
 from datetime import UTC
 from datetime import datetime
@@ -151,13 +152,13 @@ def _floor_hour(value: datetime) -> datetime:
     return value.replace(minute=0, second=0, microsecond=0)
 
 
-def find_segment_sources(
+def _segment_candidates(
     root: Path,
     camera: str,
     start_utc: datetime,
     end_utc: datetime,
-) -> list[MediaSource]:
-    sources: list[MediaSource] = []
+) -> list[tuple[datetime, Path]]:
+    candidates: list[tuple[datetime, Path]] = []
     current_hour = _floor_hour(start_utc) - timedelta(hours=1)
     last_hour = _floor_hour(end_utc)
     while current_hour <= last_hour:
@@ -173,14 +174,69 @@ def find_segment_sources(
                 continue
             if source_start >= end_utc:
                 continue
-            duration = _probe_source_duration(path)
-            if duration is None:
-                continue
-            source_end = source_start + timedelta(seconds=duration)
-            if source_end > start_utc and source_start < end_utc:
-                sources.append(MediaSource(path, source_start, source_end, priority=1))
+            candidates.append((source_start, path))
         current_hour += timedelta(hours=1)
+
+    candidates.sort()
+    starts = [source_start for source_start, _ in candidates]
+    first_index = max(0, bisect_left(starts, start_utc) - 1)
+    return candidates[first_index:]
+
+
+def find_segment_sources_for_ranges(
+    root: Path,
+    camera: str,
+    ranges: list[tuple[datetime, datetime]],
+) -> list[MediaSource]:
+    candidates: dict[Path, datetime] = {}
+    for start_utc, end_utc in ranges:
+        for source_start, path in _segment_candidates(root, camera, start_utc, end_utc):
+            candidates[path] = source_start
+
+    sources: list[MediaSource] = []
+    for path, source_start in sorted(candidates.items(), key=lambda item: (item[1], item[0])):
+        duration = _probe_source_duration(path)
+        if duration is None:
+            continue
+        source_end = source_start + timedelta(seconds=duration)
+        if any(
+            source_end > range_start and source_start < range_end
+            for range_start, range_end in ranges
+        ):
+            sources.append(MediaSource(path, source_start, source_end, priority=1))
     return sources
+
+
+def find_segment_sources(
+    root: Path,
+    camera: str,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[MediaSource]:
+    return find_segment_sources_for_ranges(root, camera, [(start_utc, end_utc)])
+
+
+def find_uncovered_ranges(
+    sources: list[MediaSource],
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[tuple[datetime, datetime]]:
+    cursor = start_utc
+    ranges: list[tuple[datetime, datetime]] = []
+    tolerance = timedelta(seconds=COVERAGE_TOLERANCE_SECONDS)
+
+    for source in sorted(sources, key=lambda item: (item.start_utc, item.end_utc)):
+        if source.end_utc <= cursor or source.start_utc >= end_utc:
+            continue
+        if source.start_utc > cursor + tolerance:
+            ranges.append((cursor, min(source.start_utc, end_utc)))
+        cursor = max(cursor, min(source.end_utc, end_utc))
+        if cursor >= end_utc:
+            break
+
+    if cursor < end_utc:
+        ranges.append((cursor, end_utc))
+    return ranges
 
 
 def plan_media_slices(
@@ -236,9 +292,27 @@ def resolve_media_slices(
     end_utc: datetime,
     archive_tz: ZoneInfo,
 ) -> list[MediaSlice]:
-    sources = find_archive_sources(archive_root, camera, start_utc, end_utc, archive_tz)
-    sources.extend(find_segment_sources(segments_root, camera, start_utc, end_utc))
-    return plan_media_slices(sources, start_utc, end_utc)
+    archive_sources = find_archive_sources(
+        archive_root,
+        camera,
+        start_utc,
+        end_utc,
+        archive_tz,
+    )
+    uncovered_ranges = find_uncovered_ranges(archive_sources, start_utc, end_utc)
+    if not uncovered_ranges:
+        return plan_media_slices(archive_sources, start_utc, end_utc)
+
+    segment_sources = find_segment_sources_for_ranges(
+        segments_root,
+        camera,
+        uncovered_ranges,
+    )
+    return plan_media_slices(
+        [*archive_sources, *segment_sources],
+        start_utc,
+        end_utc,
+    )
 
 
 def _ffconcat_quote(path: Path) -> str:
