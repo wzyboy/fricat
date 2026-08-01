@@ -98,6 +98,8 @@ The command prints a status for each camera and exits with `0` when healthy, `1`
 
 By default it checks the three newest files that have been settled for at least 15 seconds, requires the newest completed segment to be no more than 60 seconds old, and rejects audio packet durations or PTS gaps over one second. See `fricat check-segments --help` for overrides.
 
+Prometheus textfile metrics are written to `/var/lib/node_exporter/fricat_check_segments.prom` by default. Pass every expected camera with repeated `--camera` options so a camera that produces no directories or segments is reported as unhealthy.
+
 ### repair
 
 Scan existing hourly archives for malformed container durations. Scanning is the default and does not modify files:
@@ -146,9 +148,10 @@ Exported clips stream-copy video and normalize audio timestamps to AAC, filling 
 
 ## Metrics
 
-The `concat` and `prune` commands write Prometheus textfile metrics via `prometheus-client`:
+The `concat`, `check-segments`, and `prune` commands write Prometheus textfile metrics via `prometheus-client`:
 
 - `concat`: processed bytes/files, repaired files, malformed-audio archives, duration, last run timestamp
+- `check-segments`: per-camera health and latest-segment timestamp, camera status counts, errors, duration, last run timestamp
 - `prune`: input/kept/removed counts, removed bytes, duration, last run timestamp
 
 Override the output path with `--metrics-file` on each command.

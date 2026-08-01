@@ -1,13 +1,92 @@
 import math
 import time
 import subprocess
+from time import perf_counter
 from pathlib import Path
 from datetime import datetime
+from dataclasses import dataclass
 
 import click
+from prometheus_client import Gauge
+from prometheus_client import CollectorRegistry
+from prometheus_client import write_to_textfile
 
 from fricat.media import MAX_AUDIO_GAP_SECONDS
 from fricat.media import probe_audio_health
+
+
+@dataclass(frozen=True)
+class CameraCheckResult:
+    camera: str
+    healthy: bool
+    error: bool
+    latest_segment_timestamp: float
+
+
+def write_check_metrics(
+    metrics_path: Path,
+    results: list[CameraCheckResult],
+    setup_errors: int,
+    duration: float,
+    timestamp: float,
+) -> None:
+    registry = CollectorRegistry()
+    camera_healthy = Gauge(
+        'fricat_check_segments_camera_healthy',
+        '',
+        labelnames=('camera',),
+        registry=registry,
+    )
+    latest_segment_timestamp = Gauge(
+        'fricat_check_segments_latest_segment_timestamp_seconds',
+        '',
+        labelnames=('camera',),
+        registry=registry,
+    )
+    for result in results:
+        camera_healthy.labels(camera=result.camera).set(float(result.healthy))
+        latest_segment_timestamp.labels(camera=result.camera).set(
+            result.latest_segment_timestamp
+        )
+
+    healthy = sum(result.healthy for result in results)
+    camera_errors = sum(result.error for result in results)
+    errors = setup_errors + camera_errors
+    run_metrics = {
+        'fricat_check_segments_checked_cameras': len(results),
+        'fricat_check_segments_healthy_cameras': healthy,
+        'fricat_check_segments_unhealthy_cameras': len(results) - healthy - camera_errors,
+        'fricat_check_segments_errors': errors,
+        'fricat_check_segments_duration_seconds': duration,
+        'fricat_check_segments_last_run_timestamp_seconds': timestamp,
+    }
+    for name, value in run_metrics.items():
+        Gauge(name, '', registry=registry).set(float(value))
+
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    write_to_textfile(str(metrics_path), registry)
+
+
+def publish_check_metrics(
+    metrics_path: Path,
+    results: list[CameraCheckResult],
+    setup_errors: int,
+    started_at: float,
+    timestamp: float,
+) -> bool:
+    try:
+        write_check_metrics(
+            metrics_path,
+            results,
+            setup_errors,
+            perf_counter() - started_at,
+            timestamp,
+        )
+    except OSError as err:
+        click.echo(f'ERROR: unable to write metrics: {err}', err=True)
+        return False
+    click.echo(f'Wrote metrics to {metrics_path}')
+    return True
 
 
 def _archive_hour(path: Path) -> tuple[str, int] | None:
@@ -95,6 +174,13 @@ def recent_completed_segments(
     show_default=True,
     help='Maximum audio packet duration or PTS gap.',
 )
+@click.option(
+    '--metrics-file',
+    type=click.Path(path_type=Path),
+    default=Path('/var/lib/node_exporter/fricat_check_segments.prom'),
+    show_default=True,
+    help='Write Prometheus textfile metrics to this path.',
+)
 @click.pass_context
 def main(
     context: click.Context,
@@ -104,31 +190,42 @@ def main(
     settle_seconds: float,
     max_age: float,
     max_audio_gap: float,
+    metrics_file: Path,
 ) -> None:
     """Check recent Frigate segments for corrupt or stale audio."""
+    started_at = perf_counter()
+    timestamp = time.time()
+    expected_cameras = list(dict.fromkeys(cameras))
     recordings_root = recordings_root.resolve()
     try:
         hour_directories = find_latest_hour_directories(recordings_root)
     except OSError as err:
         click.echo(f'ERROR: unable to inspect recordings: {err}', err=True)
+        results = [CameraCheckResult(camera, False, True, 0.0) for camera in expected_cameras]
+        publish_check_metrics(metrics_file, results, int(not results), started_at, timestamp)
         context.exit(2)
 
     if not hour_directories:
         click.echo('ERROR: no recording hour directories found', err=True)
+        results = [CameraCheckResult(camera, False, True, 0.0) for camera in expected_cameras]
+        publish_check_metrics(metrics_file, results, int(not results), started_at, timestamp)
         context.exit(2)
 
     try:
-        selected_cameras = list(dict.fromkeys(cameras)) if cameras else discover_cameras(hour_directories)
+        selected_cameras = expected_cameras or discover_cameras(hour_directories)
     except OSError as err:
         click.echo(f'ERROR: unable to discover cameras: {err}', err=True)
+        publish_check_metrics(metrics_file, [], 1, started_at, timestamp)
         context.exit(2)
     if not selected_cameras:
         click.echo('ERROR: no cameras found', err=True)
+        publish_check_metrics(metrics_file, [], 1, started_at, timestamp)
         context.exit(2)
 
-    now = time.time()
+    now = timestamp
     unhealthy = 0
     errors = 0
+    results: list[CameraCheckResult] = []
     for camera in selected_cameras:
         try:
             segments = recent_completed_segments(
@@ -141,30 +238,39 @@ def main(
         except OSError as err:
             errors += 1
             click.echo(f'ERROR     {camera}: unable to inspect segments: {err}')
+            results.append(CameraCheckResult(camera, False, True, 0.0))
             continue
 
         if not segments:
             unhealthy += 1
             click.echo(f'UNHEALTHY {camera}: no completed segments found')
+            results.append(CameraCheckResult(camera, False, False, 0.0))
             continue
 
         try:
-            age = now - segments[0].stat().st_mtime
+            latest_segment_timestamp = segments[0].stat().st_mtime
+            age = now - latest_segment_timestamp
         except OSError as err:
             errors += 1
             click.echo(f'ERROR     {camera}: unable to inspect newest segment: {err}')
+            results.append(CameraCheckResult(camera, False, True, 0.0))
             continue
         if not math.isfinite(age) or age > max_age:
             unhealthy += 1
             click.echo(f'UNHEALTHY {camera}: newest completed segment is {age:.1f}s old')
+            results.append(
+                CameraCheckResult(camera, False, False, latest_segment_timestamp)
+            )
             continue
 
         camera_reason: str | None = None
+        camera_error = False
         for segment in segments:
             try:
                 health = probe_audio_health(segment, max_audio_gap)
             except OSError as err:
                 errors += 1
+                camera_error = True
                 camera_reason = f'checker failed: {err}'
                 break
             except (subprocess.CalledProcessError, ValueError) as err:
@@ -180,14 +286,25 @@ def main(
             else:
                 unhealthy += 1
                 click.echo(f'UNHEALTHY {camera}: {camera_reason}')
+            results.append(
+                CameraCheckResult(
+                    camera,
+                    False,
+                    camera_error,
+                    latest_segment_timestamp,
+                )
+            )
             continue
 
         click.echo(f'HEALTHY   {camera}: {len(segments)} segment(s), latest {age:.1f}s old')
+        results.append(CameraCheckResult(camera, True, False, latest_segment_timestamp))
 
     click.echo(
         f'Checked {len(selected_cameras)} camera(s): '
         f'{len(selected_cameras) - unhealthy - errors} healthy, {unhealthy} unhealthy, {errors} errors.'
     )
+    if not publish_check_metrics(metrics_file, results, 0, started_at, timestamp):
+        context.exit(2)
     if errors:
         context.exit(2)
     if unhealthy:
