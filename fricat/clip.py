@@ -15,7 +15,7 @@ from fricat.utils import parse_recording_path
 
 DEFAULT_ARCHIVE_TIMEZONE = 'America/Vancouver'
 LEGACY_FILENAME_CUTOFF = datetime(2025, 11, 18)
-COVERAGE_TOLERANCE_SECONDS = 0.1
+COVERAGE_TOLERANCE_SECONDS = 1.0
 
 
 class ClipExportError(Exception):
