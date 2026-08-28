@@ -7,7 +7,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 MAX_ARCHIVE_DURATION_SECONDS = 3700.0
-MAX_AUDIO_GAP_SECONDS = 1.0
+MAX_AUDIO_GAP_SECONDS = 2.0
 
 
 @dataclass(frozen=True)

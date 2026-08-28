@@ -96,7 +96,7 @@ fricat check-segments /fastpool/frigate/recordings
 
 The command prints a status for each camera and exits with `0` when healthy, `1` when recordings are corrupt or stale, and `2` when the check itself cannot run reliably.
 
-By default it checks the three newest files that have been settled for at least 15 seconds, requires the newest completed segment to be no more than 60 seconds old, and rejects audio packet durations or PTS gaps over one second. See `fricat check-segments --help` for overrides.
+By default it checks the three newest files that have been settled for at least 15 seconds, requires the newest completed segment to be no more than 60 seconds old, and rejects audio packet durations or PTS gaps over two seconds. See `fricat check-segments --help` for overrides.
 
 Prometheus textfile metrics are written to `/var/lib/node_exporter/fricat_check_segments.prom` by default. Pass every expected camera with repeated `--camera` options so a camera that produces no directories or segments is reported as unhealthy.
 
