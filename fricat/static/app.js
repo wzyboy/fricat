@@ -10,6 +10,8 @@ class FricatApp {
             currentDate: document.getElementById('date-picker')?.value || this.getTodayDateString(defaultTimezone),
             currentCamera: null,
             currentHour: null,
+            playbackTimestamp: null,
+            pendingSeek: null,
             recordings: [],
             isPlaying: false,
             autoplay: true,
@@ -82,10 +84,15 @@ class FricatApp {
 
         this.elements.cameraBtns.forEach(btn => {
             btn.addEventListener('click', async () => {
+                const timestamp = this.state.playbackTimestamp ?? (
+                    this.state.currentHour
+                        ? Date.parse(this.state.currentHour.start_utc) + this.elements.video.currentTime * 1000
+                        : null
+                );
                 this.elements.cameraBtns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 this.state.currentCamera = btn.dataset.camera;
-                await this.loadDay();
+                await this.loadDay(timestamp);
                 await this.refreshRecordedDates();
             });
         });
@@ -336,8 +343,10 @@ class FricatApp {
         }
     }
 
-    async loadDay() {
+    async loadDay(timestamp = null) {
         const requestSeq = ++this.dayRequestSeq;
+        this.state.playbackTimestamp = timestamp;
+        this.clearVideo();
         if (!this.state.currentCamera) {
             this.state.recordings = [];
             this.renderHourList();
@@ -370,9 +379,14 @@ class FricatApp {
 
             this.renderHourList();
             
-            // Auto-load first recording if available
-            if (this.state.recordings.length > 0) {
-                this.loadRecording(this.state.recordings[0]);
+            const recording = timestamp === null
+                ? this.state.recordings[0]
+                : this.state.recordings.find(r => {
+                    const start = Date.parse(r.start_utc);
+                    return start <= timestamp && timestamp < start + 3600000;
+                });
+            if (recording) {
+                this.loadRecording(recording, timestamp);
             } else {
                 this.clearVideo();
             }
@@ -447,14 +461,18 @@ class FricatApp {
         return 'daylight-day';
     }
 
-    async loadRecording(recording) {
+    async loadRecording(recording, timestamp = null) {
         this.state.currentHour = recording;
+        this.state.playbackTimestamp = timestamp;
+        this.state.pendingSeek = timestamp === null
+            ? null
+            : (timestamp - Date.parse(recording.start_utc)) / 1000;
         this.resetClip();
         this.elements.video.src = `/media/${this.encodeMediaPath(recording.path)}`;
         this.state.isPlaying = false;
         this.updateUI();
         this.renderHourList();
-        this.playVideo();
+        if (timestamp === null) this.playVideo();
 
         // Load Activity Meta
         if (recording.has_meta) {
@@ -555,6 +573,10 @@ class FricatApp {
 
 
     onTimeUpdate() {
+        if (this.state.playbackTimestamp !== null) {
+            this.updateTimestamp(this.state.playbackTimestamp);
+            return;
+        }
         const v = this.elements.video;
         if (!v.duration) return;
 
@@ -567,19 +589,29 @@ class FricatApp {
         if (this.state.currentHour) {
             const baseTime = new Date(this.state.currentHour.start_utc);
             const currentTime = new Date(baseTime.getTime() + v.currentTime * 1000);
-            const lp = this.getLocalParts(currentTime);
-            this.elements.videoTimestamp.textContent = `${lp.year}-${lp.month}-${lp.day} ${lp.hour}:${lp.minute}:${lp.second}`;
-            this.elements.activitySeeker.setAttribute(
-                'aria-valuetext',
-                `${lp.hour}:${lp.minute}:${lp.second}`
-            );
+            this.updateTimestamp(currentTime);
         }
     }
 
+    updateTimestamp(timestamp) {
+        const lp = this.getLocalParts(timestamp);
+        this.elements.videoTimestamp.textContent = `${lp.year}-${lp.month}-${lp.day} ${lp.hour}:${lp.minute}:${lp.second}`;
+        this.elements.activitySeeker.setAttribute('aria-valuetext', `${lp.hour}:${lp.minute}:${lp.second}`);
+    }
+
     onLoadedMetadata() {
+        const video = this.elements.video;
+        if (!this.state.currentHour || video.readyState < 1 || video.currentSrc !== video.src) return;
         this.updateSeekerAvailability();
         this.updateClipMarkers();
-        this.elements.video.playbackRate = this.state.playbackRate;
+        video.playbackRate = this.state.playbackRate;
+        if (this.state.pendingSeek !== null) {
+            this.seekTo(this.state.pendingSeek);
+            this.state.pendingSeek = null;
+            this.state.playbackTimestamp = null;
+            this.onTimeUpdate();
+            this.playVideo();
+        }
     }
 
     updateSeekerAvailability() {
@@ -807,10 +839,14 @@ class FricatApp {
 
     clearVideo() {
         this.state.currentHour = null;
+        this.state.pendingSeek = null;
         this.resetClip();
         this.elements.video.src = '';
         this.updateSeekerAvailability();
         this.elements.videoTimestamp.textContent = '--:--:--';
+        if (this.state.playbackTimestamp !== null) {
+            this.updateTimestamp(this.state.playbackTimestamp);
+        }
         this.state.isPlaying = false;
         this.activityRequestSeq += 1;
         this.updateUI();
