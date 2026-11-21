@@ -6,5 +6,6 @@ services:
       - '8000:8000'
     environment:
       FRICAT_TIMEZONE: 'America/Vancouver'
+      FRICAT_CAMERA_NAMES: 'CAM1,CAM2,CAM3,CAM4,CAM5,CAM6,CAM7,CAM8'
     volumes:
       - '/media/frigate:/archive:ro'

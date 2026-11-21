@@ -21,6 +21,7 @@ def isolate_web_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('FRICAT_SCAN_CACHE_TTL_SECONDS', raising=False)
     monkeypatch.delenv('FRICAT_WEB_INDEX_PATH', raising=False)
     monkeypatch.delenv('FRICAT_TIMEZONE', raising=False)
+    monkeypatch.delenv('FRICAT_CAMERA_NAMES', raising=False)
 
 
 @pytest.fixture
@@ -75,6 +76,16 @@ def archive_root(tmp_path: Path) -> Path:
         encoding='utf-8',
     )
     return tmp_path
+
+
+def test_cameras_returns_configured_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('FRICAT_CAMERA_NAMES', ' front_door, driveway, ,backyard, ')
+    client = TestClient(webapp.app)
+
+    response = client.get('/api/cameras')
+
+    assert response.status_code == 200
+    assert response.json() == ['front_door', 'driveway', 'backyard']
 
 
 def test_config_returns_default_timezone() -> None:

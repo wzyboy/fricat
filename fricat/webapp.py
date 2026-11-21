@@ -29,7 +29,7 @@ from fricat.utils import parse_recording_path
 
 logger = logging.getLogger(__name__)
 
-CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
+DEFAULT_CAMERA_NAMES: list[str] = ['CAM1', 'CAM2', 'CAM3', 'CAM4', 'CAM5', 'CAM6', 'CAM7', 'CAM8']
 
 
 @dataclass(frozen=True)
@@ -362,7 +362,8 @@ async def config() -> JSONResponse:
 
 @app.get('/api/cameras')
 async def cameras() -> JSONResponse:
-    return JSONResponse(content=list(CAMERA_NAMES))
+    names = [name.strip() for name in os.environ.get('FRICAT_CAMERA_NAMES', '').split(',')]
+    return JSONResponse(content=[name for name in names if name] or list(DEFAULT_CAMERA_NAMES))
 
 
 @app.get('/api/recorded_dates')
