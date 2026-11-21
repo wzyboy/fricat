@@ -1,5 +1,6 @@
 import os
 import shlex
+import shutil
 import itertools
 import subprocess
 from time import time
@@ -10,6 +11,7 @@ from datetime import datetime
 from datetime import timedelta
 from tempfile import NamedTemporaryFile
 from tempfile import TemporaryDirectory
+from contextlib import ExitStack
 
 import click
 
@@ -83,6 +85,52 @@ def representative_segments(src_files: list[Path]) -> list[Path]:
     return [src_files[index] for index in indices]
 
 
+def create_archive(
+    src_files: list[Path],
+    dst_file: Path,
+    db_path: Path,
+    camera: str,
+    start_utc: datetime,
+    work_dir: Path | None = None,
+) -> tuple[int, bool]:
+    dst_file.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = work_dir if work_dir is not None else dst_file.parent
+    staging_root.mkdir(parents=True, exist_ok=True)
+    with ExitStack() as stack:
+        staging_dir = Path(stack.enter_context(
+            TemporaryDirectory(prefix=f'.{dst_file.stem}.', dir=staging_root)
+        ))
+        archive_path = staging_dir / dst_file.name
+        size, repaired = build_validated_archive(src_files, archive_path)
+        sidecar = generate_sidecar(
+            db_path=db_path,
+            recording_path=archive_path,
+            camera=camera,
+            start_utc=start_utc,
+        )
+        sidecar_path = archive_path.with_suffix('.json')
+        if sidecar is not None:
+            write_sidecar(sidecar_path, sidecar)
+
+        if work_dir is not None:
+            publish_dir = Path(stack.enter_context(
+                TemporaryDirectory(prefix=f'.{dst_file.stem}.', dir=dst_file.parent)
+            ))
+            published_archive = publish_dir / dst_file.name
+            shutil.copyfile(archive_path, published_archive)
+            archive_path = published_archive
+            if sidecar is not None:
+                published_sidecar = publish_dir / sidecar_path.name
+                shutil.copyfile(sidecar_path, published_sidecar)
+                sidecar_path = published_sidecar
+
+        # The final video filename marks completion; publish its sidecar first.
+        if sidecar is not None:
+            os.replace(sidecar_path, dst_file.with_suffix('.json'))
+        os.replace(archive_path, dst_file)
+        return size, repaired
+
+
 def find_audio_issue(src_files: list[Path]) -> tuple[Path, str] | None:
     for segment in representative_segments(src_files):
         try:
@@ -97,6 +145,12 @@ def find_audio_issue(src_files: list[Path]) -> tuple[Path, str] | None:
 @click.command()
 @click.argument('src_root', type=click.Path(path_type=Path))
 @click.argument('dst_root', type=click.Path(path_type=Path))
+@click.option(
+    '--work-dir',
+    type=click.Path(file_okay=False, path_type=Path),
+    help='Build and analyze archives here before copying to the destination; '
+    'defaults to staging in the archive directory',
+)
 @click.option(
     '--metrics-file',
     type=click.Path(path_type=Path),
@@ -116,6 +170,7 @@ def main(
     dst_root: Path,
     metrics_file: Path,
     db_path: Path,
+    work_dir: Path | None = None,
 ) -> None:
     # /fastpool/frigate/recordings/2025-11-18/14/CAM2/56.31.mp4
     #                                         %H      %M %S
@@ -159,21 +214,17 @@ def main(
                 f'{segment.name}: {reason}',
                 err=True,
             )
-        archive_size, repaired = build_validated_archive(grouped_recordings, dst_file)
-        total_size += archive_size
-        repaired_files += int(repaired)
-
-        # Generate sidecar JSON file
-        sidecar_path = dst_file.with_suffix('.json')
         start_utc = datetime.fromisoformat(f'{date_str} {hour_str}:00:00Z')
-        sidecar = generate_sidecar(
+        archive_size, repaired = create_archive(
+            src_files=grouped_recordings,
+            dst_file=dst_file,
             db_path=db_path,
-            recording_path=dst_file,
             camera=cam_name,
             start_utc=start_utc,
+            work_dir=work_dir,
         )
-        if sidecar is not None:
-            write_sidecar(sidecar_path, sidecar)
+        total_size += archive_size
+        repaired_files += int(repaired)
 
     print(f'Total size: {format_size(total_size)}')
     duration = perf_counter() - started_at

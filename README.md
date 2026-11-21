@@ -54,6 +54,16 @@ Command:
 fricat concat /media/frigate/recordings /media/frigate/archive
 ```
 
+If the archive directory is on a slow storage, add `--work-dir` to reduce slow I/O:
+
+```bash
+fricat concat /media/frigate/recordings /mnt/nfs/archive --work-dir /var/tmp/fricat
+```
+
+Without `--work-dir`, temporary files stay in the archive directory. With it,
+the work directory is created if needed and temporary files are cleaned up
+after each archive.
+
 Notes:
 
 - Only processes fully-finished hours: if now is 10:00 UTC, it only processes up to `08`.
